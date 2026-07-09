@@ -1,0 +1,185 @@
+{
+  "entities": {
+    "Car": {
+      "title": "Car",
+      "description": "A vehicle in the inventory.",
+      "type": "object",
+      "properties": {
+        "make": { "type": "string", "description": "Manufacturer of the car." },
+        "model": { "type": "string", "description": "Model of the car." },
+        "year": { "type": "integer", "description": "Year of manufacture." },
+        "price": { "type": "number", "description": "Price of the car." },
+        "mileage": { "type": "number", "description": "Mileage in km." },
+        "fuelType": { "type": "string", "description": "Type of fuel used." },
+        "transmission": { "type": "string", "description": "Type of transmission." },
+        "bodyStyle": { "type": "string", "description": "Style of the car body." },
+        "images": { "type": "array", "items": { "type": "string" }, "description": "List of image URLs." },
+        "isFeatured": { "type": "boolean", "description": "Whether the car is featured on the home page." },
+        "trim": { "type": "string", "description": "Trim level of the car." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the record was created." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "When the record was last updated." }
+      },
+      "required": ["make", "model", "year", "price", "mileage", "fuelType", "transmission", "bodyStyle", "images"]
+    },
+    "User": {
+      "title": "User",
+      "description": "A user of the application.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email", "description": "User's email address." },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "User's role." },
+        "displayName": { "type": "string", "description": "User's display name." },
+        "isActive": { "type": "boolean", "description": "Whether the user is active in the round robin." },
+        "weight": { "type": "integer", "minimum": 1, "maximum": 5, "description": "Lead assignment weight (1-5)." },
+        "leadsReceivedCount": { "type": "integer", "description": "Total leads assigned to this user." },
+        "lastAssignedTimestamp": { "type": "string", "format": "date-time", "description": "Timestamp of the last lead assignment." }
+      },
+      "required": ["email", "role"]
+    },
+    "Lead": {
+      "title": "Lead",
+      "description": "A customer lead from an inquiry or financing application.",
+      "type": "object",
+      "properties": {
+        "firstName": { "type": "string", "description": "Customer's first name." },
+        "lastName": { "type": "string", "description": "Customer's last name." },
+        "email": { "type": "string", "format": "email", "description": "Customer's email address." },
+        "phone": { "type": "string", "description": "Customer's phone number." },
+        "dob": { "type": "string", "description": "Customer's date of birth (MM/DD/YYYY)." },
+        "annualIncome": { "type": "string", "description": "Customer's gross annual income." },
+        "monthlyHousing": { "type": "string", "description": "Customer's monthly housing payment." },
+        "streetAddress": { "type": "string", "description": "Customer's street address." },
+        "suite": { "type": "string", "description": "Customer's suite or unit number." },
+        "city": { "type": "string", "description": "Customer's city." },
+        "province": { "type": "string", "description": "Customer's province." },
+        "postalCode": { "type": "string", "description": "Customer's postal code." },
+        "type": { "type": "string", "enum": ["inquiry", "financing"], "description": "Type of lead." },
+        "status": { "type": "string", "enum": ["new", "contacted", "in-progress", "closed"], "description": "Current status of the lead." },
+        "vehicleId": { "type": "string", "description": "ID of the vehicle the lead is interested in." },
+        "assignedTo": { "type": "string", "description": "UID of the admin assigned to this lead." },
+        "price": { "type": "string", "description": "Vehicle price if applicable." },
+        "downPayment": { "type": "string", "description": "Down payment amount if applicable." },
+        "consent": { "type": "boolean", "description": "Whether the customer gave consent." },
+        "notes": { "type": "string", "description": "Internal notes about the lead." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the lead was created." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "When the lead was last updated." }
+      },
+      "required": ["firstName", "lastName", "email", "phone", "type", "status", "createdAt", "updatedAt"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Global application settings.",
+      "type": "object",
+      "properties": {
+        "lastAssignedAdminId": { "type": "string", "description": "UID of the last admin assigned a lead." }
+      }
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "An internal notification for an admin.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user this notification is for." },
+        "title": { "type": "string", "description": "Title of the notification." },
+        "message": { "type": "string", "description": "Message content." },
+        "type": { "type": "string", "enum": ["new_lead", "status_change"], "description": "Type of notification." },
+        "leadId": { "type": "string", "description": "ID of the associated lead." },
+        "isRead": { "type": "boolean", "description": "Whether the notification has been read." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the notification was created." }
+      },
+      "required": ["userId", "title", "message", "type", "isRead", "createdAt"]
+    },
+    "SoldStory": {
+      "title": "Sold Story",
+      "description": "A customer delivery story with a photo.",
+      "type": "object",
+      "properties": {
+        "imageUrl": { "type": "string", "description": "URL of the customer delivery photo." },
+        "customerName": { "type": "string", "description": "Name of the customer." },
+        "location": { "type": "string", "description": "City and Province of the delivery." },
+        "vehicleInfo": { "type": "string", "description": "Year, Make, Model of the vehicle sold." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the story was added." }
+      },
+      "required": ["imageUrl", "customerName", "location", "vehicleInfo", "timestamp"]
+    },
+    "TeamMember": {
+      "title": "Team Member",
+      "description": "An employee of Vehicle Approval Centre.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Employee's full name." },
+        "title": { "type": "string", "description": "Employee's job title." },
+        "email": { "type": "string", "format": "email", "description": "Employee's email address." },
+        "phone": { "type": "string", "description": "Employee's phone number." },
+        "category": { "type": "string", "enum": ["Our Founders", "General Management", "Finance Department", "Sales & Product Specialists", "Delivery & Logistics"], "description": "Department category." },
+        "specialty": { "type": "string", "description": "Specialty or fun fact about the employee." },
+        "photoURL": { "type": "string", "description": "URL of the employee's portrait photo." },
+        "orderIndex": { "type": "integer", "description": "Sorting order index." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the record was created." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "When the record was last updated." }
+      },
+      "required": ["name", "title", "category", "photoURL", "orderIndex"]
+    },
+    "Chat": {
+      "title": "Chat",
+      "description": "A conversation between a customer and the team.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The site-generated conversation ID." },
+        "lastMessage": { "type": "string", "description": "The text of the last message sent." },
+        "googleThreadName": { "type": "string", "description": "The associated Google Chat thread name." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "When the conversation was last active." }
+      },
+      "required": ["id", "lastMessage", "updatedAt"]
+    },
+    "ChatMessage": {
+      "title": "Chat Message",
+      "description": "A single message within a chat conversation.",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string", "description": "The message content." },
+        "sender": { "type": "string", "enum": ["customer", "team"], "description": "Who sent the message." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Message timestamp." }
+      },
+      "required": ["text", "sender", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/inventory/{carId}": {
+      "schema": "Car",
+      "description": "Collection of vehicles available for sale."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user profiles and roles."
+    },
+    "/leads/{leadId}": {
+      "schema": "Lead",
+      "description": "Collection of customer inquiries and financing applications."
+    },
+    "/settings/{settingId}": {
+      "schema": "Settings",
+      "description": "Global application settings."
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Internal notifications for admins."
+    },
+    "/soldStories/{storyId}": {
+      "schema": "SoldStory",
+      "description": "Collection of customer delivery stories."
+    },
+    "/team/{memberId}": {
+      "schema": "TeamMember",
+      "description": "Collection of team members for the public Team page."
+    },
+    "/chats/{conversationId}": {
+      "schema": "Chat",
+      "description": "Collection of active chat conversations."
+    },
+    "/chats/{conversationId}/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Individual messages in a chat conversation."
+    }
+  }
+}

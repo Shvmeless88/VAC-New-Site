@@ -1,0 +1,3 @@
+console.log("CARFAX_CLIENT_ID:", process.env.CARFAX_CLIENT_ID ? "PRESENT" : "MISSING");
+console.log("CARFAX_CLIENT_SECRET:", process.env.CARFAX_CLIENT_SECRET ? "PRESENT" : "MISSING");
+console.log("CARFAX_ACCOUNT_NUMBER:", process.env.CARFAX_ACCOUNT_NUMBER ? "PRESENT" : "MISSING");

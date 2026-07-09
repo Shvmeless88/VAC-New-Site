@@ -1,0 +1,155 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Admin check (Full Access)
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == "j.jackson@drivevac.ca" ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ["super_admin", "general_manager", "finance_manager"])
+      );
+    }
+
+    // Staff check (Limited Access - e.g. for photos)
+    function isStaff() {
+      return isAdmin() || (
+        isSignedIn() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "sales_rep"
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Entity Validations ---
+
+    function isValidLead(data) {
+      return data.firstName is string && 
+             data.lastName is string && 
+             data.email is string && 
+             data.type in ['inquiry', 'financing'];
+    }
+
+    function isValidCar(data) {
+      return data.make is string && data.model is string;
+    }
+
+    function isValidChat(data) {
+      return data.id is string && data.id.size() <= 64 &&
+             data.lastMessage is string && data.lastMessage.size() <= 2000;
+    }
+
+    function isValidChatMessage(data) {
+      return data.text is string && data.text.size() <= 2000 &&
+             data.sender in ['customer', 'team'];
+    }
+
+    // --- Collection Routes ---
+
+    match /leads/{leadId} {
+      allow create: if isValidId(leadId) && isValidLead(incoming());
+      allow get, list: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /inventory/{carId} {
+      allow get, list: if true;
+      allow create: if isAdmin() && isValidId(carId) && isValidCar(incoming());
+      allow update: if isAdmin() && isValidCar(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /deliveries/{deliveryId} {
+      allow get, list: if true;
+      allow create, update, delete: if isStaff();
+    }
+
+    match /invitations/{inviteId} {
+      allow get: if true;
+      allow list: if true; // Allow checking for invite during signup
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin() || (isSignedIn());
+      allow list: if true; // Needed for public round robin assignment
+      allow create: if isOwner(userId) || isAdmin();
+      allow update: if isAdmin() || 
+                      (isOwner(userId) && !incoming().diff(existing()).affectedKeys().hasAny(['role'])) ||
+                      (incoming().diff(existing()).affectedKeys().hasOnly(['leadsReceivedCount', 'lastAssignedTimestamp', 'updatedAt', 'isClockedIn', 'lastShiftToggle'])); 
+      allow delete: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow get: if true;
+      allow update, write: if isAdmin() || (settingId == 'roundRobin');
+    }
+
+    match /soldStories/{storyId} {
+      allow get, list: if true;
+      allow write: if isStaff();
+    }
+
+    match /team/{memberId} {
+      allow get, list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow get, list, update, delete: if isSignedIn();
+      allow create: if true; // Allow system/leads logic to create notifications (even for unauthenticated users submitting leads)
+    }
+
+    match /config/{configId} {
+      allow get: if isSignedIn(); // Allow all signed in users to read config if needed
+      allow write: if isAdmin();
+    }
+
+    // Chat Feature Rules
+    match /chats/{conversationId} {
+      allow read: if isValidId(conversationId);
+      allow create: if isValidId(conversationId) && isValidChat(incoming());
+      allow update: if isValidId(conversationId) && (
+        // Allow anyone with the ID to update lastMessage
+        (incoming().diff(existing()).affectedKeys().hasAny(['lastMessage', 'updatedAt'])) ||
+        // Allow admin/webhook to update thread info
+        (isAdmin() || incoming().diff(existing()).affectedKeys().hasAny(['googleThreadName']))
+      );
+
+      match /messages/{messageId} {
+        allow read: if isValidId(conversationId);
+        allow create: if isValidId(conversationId) && isValidChatMessage(incoming());
+        allow update, delete: if isAdmin();
+      }
+    }
+  }
+}
