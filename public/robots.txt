@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /management-access
+
+Sitemap: https://vehicleapprovalcentre.com/sitemap.xml

@@ -224,6 +224,33 @@ async function findRecentOpenPipedriveLead(apiToken: string, personId: number) {
   return null;
 }
 
+async function findRecentOpenPipedriveDeal(apiToken: string, personId: number) {
+  try {
+    const response = await fetchWithTimeout(`https://api.pipedrive.com/v1/persons/${personId}/deals?status=open&api_token=${apiToken}`);
+    const data = await response.json();
+    if (data.success && data.data && data.data.length > 0) {
+      const fourDaysAgo = new Date();
+      fourDaysAgo.setDate(fourDaysAgo.getDate() - 4);
+      
+      // Filter and sort to find the most recent open deal within 4 days
+      const recentOpenDeals = data.data.filter((d: any) => {
+        return new Date(d.add_time) >= fourDaysAgo;
+      });
+      
+      if (recentOpenDeals.length > 0) {
+        // Sort descending by add_time
+        recentOpenDeals.sort((a: any, b: any) => {
+          return new Date(b.add_time).getTime() - new Date(a.add_time).getTime();
+        });
+        return recentOpenDeals[0];
+      }
+    }
+  } catch (err) {
+    console.error("Error fetching Pipedrive deals for person:", personId, err);
+  }
+  return null;
+}
+
 let resendClient: Resend | null = null;
 
 function getResendClient() {
@@ -494,17 +521,33 @@ async function startServer() {
         recentLead = await findRecentOpenPipedriveLead(apiToken, finalPersonId);
       }
 
-      // Generate Application ID: First 4 of last name + 4 random digits
+      let recentDeal = null;
+      if (!recentLead && finalPersonId) {
+        recentDeal = await findRecentOpenPipedriveDeal(apiToken, finalPersonId);
+      }
+
+      const appIdKey = process.env.PIPEDRIVE_APPLICATION_ID_FIELD_KEY;
+
+      // Generate Application ID or reuse existing
       let applicationId = '';
-      if (name) {
-        const nameParts = name.trim().split(' ');
-        const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : nameParts[0];
-        const shortLastName = lastName.substring(0, 4).toUpperCase();
-        const randomNums = Math.floor(1000 + Math.random() * 9000);
-        applicationId = `${shortLastName}${randomNums}`;
+      if (recentLead && appIdKey && recentLead[appIdKey]) {
+        applicationId = recentLead[appIdKey];
+        console.log("Reusing Application ID from recent Lead:", applicationId);
+      } else if (recentDeal && appIdKey && recentDeal[appIdKey]) {
+        applicationId = recentDeal[appIdKey];
+        console.log("Reusing Application ID from recent Deal:", applicationId);
       } else {
-        const randomNums = Math.floor(1000 + Math.random() * 9000);
-        applicationId = `APP-${randomNums}`;
+        if (name) {
+          const nameParts = name.trim().split(' ');
+          const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : nameParts[0];
+          const shortLastName = lastName.substring(0, 4).toUpperCase();
+          const randomNums = Math.floor(1000 + Math.random() * 9000);
+          applicationId = `${shortLastName}${randomNums}`;
+        } else {
+          const randomNums = Math.floor(1000 + Math.random() * 9000);
+          applicationId = `APP-${randomNums}`;
+        }
+        console.log("Generated fresh Application ID:", applicationId);
       }
 
       const leadPayload: any = {
@@ -517,7 +560,6 @@ async function startServer() {
       if (expected_close_date) leadPayload.expected_close_date = expected_close_date;
 
       // Application ID
-      const appIdKey = process.env.PIPEDRIVE_APPLICATION_ID_FIELD_KEY;
       if (appIdKey) {
         leadPayload[appIdKey] = applicationId;
       }
@@ -574,6 +616,7 @@ async function startServer() {
       console.log("Sending payload to Pipedrive:", JSON.stringify(leadPayload, null, 2));
 
       let leadId = recentLead ? recentLead.id : null;
+      let dealId = recentDeal ? recentDeal.id : null;
 
       if (recentLead) {
         // Update existing lead details (custom fields)
@@ -586,6 +629,22 @@ async function startServer() {
         if (!response.ok) {
           const data = await response.json();
           console.error("Pipedrive API Update Error:", JSON.stringify(data, null, 2));
+        }
+      } else if (recentDeal) {
+        // Update existing deal details (custom fields) - minus the lead-only title field
+        const dealPayload = { ...leadPayload };
+        delete dealPayload.title;
+
+        console.log(`Updating existing Deal ${recentDeal.id} with custom fields...`);
+        const response = await fetchWithTimeout(`https://api.pipedrive.com/v1/deals/${recentDeal.id}?api_token=${apiToken}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(dealPayload),
+        });
+        
+        if (!response.ok) {
+          const data = await response.json();
+          console.error("Pipedrive API Deal Update Error:", JSON.stringify(data, null, 2));
         }
       } else {
         // Create new lead
@@ -605,18 +664,19 @@ async function startServer() {
         leadId = data.data?.id;
       }
 
-      // Only create a note if it's a NEW lead OR if it's a final submission
+      // Only create a note if it's a NEW lead/deal OR if it's a final submission
       // This prevents "Note Spam" during the multi-step application process
-      const shouldCreateNote = !recentLead || isFinal;
+      const existingRecordFound = !!recentLead || !!recentDeal;
+      const shouldCreateNote = !existingRecordFound || isFinal;
 
-      if (leadId && shouldCreateNote) {
-        console.log("Creating note for lead (isUpdate:", !!recentLead, "isFinal:", !!isFinal, "):", leadId);
+      if ((leadId || dealId) && shouldCreateNote) {
+        console.log("Creating note for (leadId:", leadId, "dealId:", dealId, "isUpdate:", existingRecordFound, "isFinal:", !!isFinal, ")");
         try {
           let notePrefix = '';
           if (isTradeIn) {
-            notePrefix = recentLead ? '*** COMPLETED TRADE-IN REQUEST ***\n' : '*** NEW TRADE-IN REQUEST ***\n';
+            notePrefix = existingRecordFound ? '*** COMPLETED TRADE-IN REQUEST ***\n' : '*** NEW TRADE-IN REQUEST ***\n';
           } else {
-            notePrefix = recentLead ? '*** COMPLETED FINANCING APPLICATION ***\n' : '*** NEW FINANCING APPLICATION (Started) ***\n';
+            notePrefix = existingRecordFound ? '*** COMPLETED FINANCING APPLICATION ***\n' : '*** NEW FINANCING APPLICATION (Started) ***\n';
           }
 
           if (isFinal) {
@@ -648,20 +708,27 @@ async function startServer() {
             noteContent += `\nAssigned Rep: ${rep}`;
           }
           
+          const notePayload: any = {
+            content: noteContent
+          };
+
+          if (dealId) {
+            notePayload.deal_id = dealId;
+          } else if (leadId) {
+            notePayload.lead_id = leadId;
+          }
+
           await fetchWithTimeout(`https://api.pipedrive.com/v1/notes?api_token=${apiToken}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              content: noteContent,
-              lead_id: leadId
-            }),
+            body: JSON.stringify(notePayload),
           });
         } catch (noteErr) {
           console.error("Failed to create Pipedrive note:", noteErr);
         }
       }
 
-      res.json({ success: true, isUpdate: !!recentLead, personId: finalPersonId, leadId: leadId });
+      res.json({ success: true, isUpdate: existingRecordFound, personId: finalPersonId, leadId: leadId, dealId: dealId });
     } catch (err: any) {
       console.error("Lead creation error:", err);
       res.status(500).json({ error: err.message });
