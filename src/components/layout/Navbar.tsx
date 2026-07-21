@@ -26,6 +26,7 @@ const primaryLinks = [
   { name: 'Shop Cars', path: '/inventory' },
   { name: 'VAC Family', path: '/family' },
   { name: 'Financing', path: '/financing' },
+  { name: 'Trade-In', path: '/trade-in' },
 ];
 
 const moreLinks = [

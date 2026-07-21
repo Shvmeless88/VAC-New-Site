@@ -71,6 +71,7 @@ export default function Footer({ className }: { className?: string }) {
                 { name: 'About Us', path: '/about' },
                 { name: 'Team', path: '/team' },
                 { name: 'Financing', path: '/financing' },
+                { name: 'Trade-In', path: '/trade-in' },
                 { name: 'Return Policy', path: '/return-policy' },
                 { name: 'Careers', path: '/careers' }
               ].map((link) => (

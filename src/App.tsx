@@ -115,8 +115,8 @@ function AppLayout() {
           <Route path="/family" element={<VACFamily />} />
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/terms" element={<Terms />} />
-          <Route path="/trade-in" element={<Navigate to="/" replace />} />
-          <Route path="/trade-in/success" element={<Navigate to="/" replace />} />
+          <Route path="/trade-in" element={<TradeIn />} />
+          <Route path="/trade-in/success" element={<TradeIn />} />
           {/* Fallback to Home */}
           <Route path="*" element={<Home />} />
         </Routes>

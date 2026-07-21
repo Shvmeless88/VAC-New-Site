@@ -373,7 +373,20 @@ export default function Home() {
         </div>
       </motion.section>
 
-      {/* Trade-In Appraisal Section hidden for now */}
+      {/* Trade-In Appraisal CTA */}
+      <section className="py-16 bg-white">
+        <div className="max-w-5xl mx-auto px-4 text-center">
+          <h2 className="text-3xl md:text-4xl font-display font-black text-brand-primary tracking-tighter mb-4">
+            Have a vehicle to trade?
+          </h2>
+          <p className="text-slate-500 text-lg max-w-2xl mx-auto mb-8">
+            Get an instant estimate based on live market data — and put it toward your next ride.
+          </p>
+          <Button asChild className="bg-brand-primary text-white font-bold uppercase tracking-widest text-xs h-12 px-8 rounded-xl shadow-md hover:brightness-110 transition-all">
+            <Link to="/trade-in">Get My Trade-In Estimate</Link>
+          </Button>
+        </div>
+      </section>
 
       {/* Trust Bar - Premium Checklist Bridge */}
       <section className="py-8 md:py-16 bg-white relative z-10">
