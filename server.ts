@@ -4,6 +4,7 @@ import path from "path";
 import { Resend } from 'resend';
 import dotenv from 'dotenv';
 import { syncInventoryToGoogleSheets } from './src/lib/googleSheets';
+import { estimateFromComps, TRADE_IN_CONFIG, type TradeInCondition } from './src/lib/tradeInMath';
 
 dotenv.config();
 
@@ -783,6 +784,118 @@ async function startServer() {
       console.error("Scout request error:", err);
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ---------------- Trade-In Instant Appraisal ----------------
+  const TRADE_IN_CONDITIONS: TradeInCondition[] = ['excellent', 'good', 'fair', 'needs_work'];
+
+  // Provider 1: Canadian Black Book. Activates when CBB developer-portal
+  // credentials are configured; endpoint specifics pending account confirmation.
+  async function cbbTradeInEstimate(_params: {
+    year: number; make: string; model: string; trim?: string;
+    mileageKm: number; condition: TradeInCondition; vin?: string;
+  }): Promise<{ low: number; high: number; comps: number; source: string } | null> {
+    const cbbKey = process.env.CBB_API_KEY?.trim();
+    if (!cbbKey) return null;
+    console.warn('[TRADE-IN] CBB_API_KEY is set but the CBB provider is not implemented yet; falling through to Marketcheck.');
+    return null;
+  }
+
+  // Provider 2: Marketcheck active-listing comps (Canadian market).
+  async function marketcheckCompPrices(params: {
+    year: number; make: string; model: string; trim?: string;
+  }): Promise<number[] | null> {
+    const apiKey = process.env.MARKETCHECK_API_KEY;
+    if (!apiKey) return null;
+
+    const search = async (includeTrim: boolean): Promise<number[]> => {
+      const qs = new URLSearchParams({
+        api_key: apiKey,
+        country: 'CA',
+        car_type: 'used',
+        year: String(params.year),
+        make: params.make,
+        model: params.model,
+        rows: '50',
+        start: '0',
+      });
+      if (includeTrim && params.trim) qs.set('trim', params.trim);
+      const resp = await fetchWithTimeout(
+        `https://mc-api.marketcheck.com/v2/search/car/active?${qs.toString()}`,
+        {}, 10000
+      );
+      if (!resp.ok) throw new Error(`Marketcheck search failed: ${resp.status}`);
+      const data = await resp.json();
+      const listings = Array.isArray(data?.listings) ? data.listings : [];
+      return listings
+        .map((l: any) => Number(l?.price))
+        .filter((p: number) => Number.isFinite(p) && p > 0);
+    };
+
+    try {
+      let prices = await search(true);
+      if (prices.length < TRADE_IN_CONFIG.MIN_COMPS && params.trim) {
+        prices = await search(false);
+      }
+      return prices;
+    } catch (err) {
+      console.error('[TRADE-IN] Marketcheck comps lookup failed:', err);
+      return null;
+    }
+  }
+
+  app.post("/api/trade-in/estimate", async (req, res) => {
+    const { year, make, model, trim, mileageKm, condition, vin } = req.body || {};
+    const currentYear = new Date().getFullYear();
+    const yearNum = parseInt(year, 10);
+    const mileageNum = parseInt(mileageKm, 10);
+
+    if (
+      !Number.isInteger(yearNum) || yearNum < 1990 || yearNum > currentYear + 1 ||
+      !Number.isInteger(mileageNum) || mileageNum < 0 || mileageNum > 500_000 ||
+      typeof make !== 'string' || !make.trim() || make.length > 60 ||
+      typeof model !== 'string' || !model.trim() || model.length > 60 ||
+      !TRADE_IN_CONDITIONS.includes(condition)
+    ) {
+      return res.status(400).json({ error: 'Invalid trade-in estimate request' });
+    }
+
+    const params = {
+      year: yearNum,
+      make: make.trim(),
+      model: model.trim(),
+      trim: typeof trim === 'string' && trim.trim() ? trim.trim().slice(0, 60) : undefined,
+      mileageKm: mileageNum,
+      condition: condition as TradeInCondition,
+      vin: typeof vin === 'string' && vin.trim() ? vin.trim().slice(0, 20) : undefined,
+    };
+
+    try {
+      const cbb = await cbbTradeInEstimate(params);
+      if (cbb) return res.json({ status: 'estimate', ...cbb });
+
+      const prices = await marketcheckCompPrices(params);
+      if (prices) {
+        const range = estimateFromComps(prices, {
+          year: params.year,
+          mileageKm: params.mileageKm,
+          condition: params.condition,
+          currentYear,
+        });
+        if (range) {
+          return res.json({
+            status: 'estimate',
+            low: range.low,
+            high: range.high,
+            comps: prices.length,
+            source: 'marketcheck',
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[TRADE-IN] estimate pipeline error:', err);
+    }
+    return res.json({ status: 'manual' });
   });
 
   app.post("/api/invite", async (req, res) => {
