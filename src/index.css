@@ -259,3 +259,62 @@ input::-webkit-inner-spin-button {
 input[type=number] {
   -moz-appearance: textfield;
 }
+
+/* =================================================================
+   ADMIN DARK MODE
+   The `dark` class is toggled on <html> only while the admin dashboard
+   is mounted (see Admin.tsx), so these rules never touch the public site.
+   Scoped remap of the exact utility classes the admin uses. The sidebar
+   (bg-brand-primary charcoal) already reads as dark, so it's left as-is.
+   ================================================================= */
+html.dark,
+.dark body {
+  background-color: #13141d !important;
+  color: #e9ebf7 !important;
+  color-scheme: dark;
+}
+
+/* Surfaces — cards, bars, pills, the drawer panel */
+.dark .bg-white { background-color: #1b1d29 !important; }
+.dark .bg-slate-50,
+.dark .bg-slate-50\/70,
+.dark .bg-slate-50\/50,
+.dark .bg-gray-50,
+.dark .bg-gray-50\/30,
+.dark .bg-slate-100,
+.dark .bg-gray-100 { background-color: #171823 !important; }
+
+/* Primary / heading text */
+.dark .text-brand-primary,
+.dark .text-gray-900 { color: #e9ebf7 !important; }
+
+/* Secondary + muted text */
+.dark .text-gray-700,
+.dark .text-gray-600,
+.dark .text-gray-500 { color: #a7abc9 !important; }
+.dark .text-gray-400,
+.dark .text-gray-300,
+.dark .text-slate-400 { color: #7c7fa0 !important; }
+
+/* Borders + dividers */
+.dark .border-gray-200,
+.dark .border-gray-300 { border-color: #2f3247 !important; }
+.dark .border-gray-100,
+.dark .border-gray-50 { border-color: #262838 !important; }
+
+/* Form controls */
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: #171823 !important;
+  border-color: #2f3247 !important;
+  color: #e9ebf7 !important;
+}
+.dark input::placeholder,
+.dark textarea::placeholder { color: #6b6f8e !important; }
+.dark select option { background-color: #1b1d29; color: #e9ebf7; }
+
+/* Coloured status pills — soften the light -50 fills so they don't glare */
+.dark .bg-red-50 { background-color: rgba(239, 68, 68, 0.14) !important; }
+.dark .bg-amber-50 { background-color: rgba(245, 158, 11, 0.14) !important; }
+.dark .bg-emerald-50 { background-color: rgba(16, 185, 129, 0.14) !important; }

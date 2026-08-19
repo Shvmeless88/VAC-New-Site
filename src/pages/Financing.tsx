@@ -746,7 +746,7 @@ function Financing() {
                 <p className="text-xs font-bold uppercase tracking-widest">100% Secure & Encrypted</p>
               </div>
               <p className="text-xs text-gray-400 font-medium max-w-[240px] md:max-w-md mx-auto leading-relaxed">
-                Your data is protected. We never sell your information to third parties.
+                Your data is protected with 256-bit encryption and handled according to our Privacy Policy.
               </p>
               <div className="flex justify-center gap-4 mt-6">
                 <Link to="/privacy" className="text-[10px] text-gray-400 hover:text-brand-primary font-bold uppercase tracking-widest border-b border-gray-200">
@@ -1264,7 +1264,7 @@ function Financing() {
                 <p className="text-[10px] font-medium uppercase tracking-widest">100% Secure & Encrypted</p>
               </div>
               <p className="text-[10px] text-gray-400 font-medium max-w-[240px] md:max-w-md mx-auto leading-relaxed">
-                Your data is protected. We never sell your information to third parties.
+                Your data is protected with 256-bit encryption and handled according to our Privacy Policy.
               </p>
               <div className="flex justify-center gap-4 mt-6">
                 <Link to="/privacy" className="text-[10px] text-gray-400 hover:text-brand-primary font-bold uppercase tracking-widest border-b border-gray-200">

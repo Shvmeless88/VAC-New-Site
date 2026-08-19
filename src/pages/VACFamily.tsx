@@ -82,10 +82,15 @@ export default function VACFamily() {
                   
                   {/* Image Section - 16:9 */}
                   <div className="relative aspect-video overflow-hidden bg-gray-100 rounded-t-xl">
-                    <img 
-                      src={delivery.photoUrl} 
+                    {/* Firebase Storage can't resize on the fly, so these are
+                        whatever was uploaded. Lazy-load so we don't pull every
+                        photo at once on a phone. */}
+                    <img
+                      src={delivery.photoUrl}
                       alt={`Congrats, ${delivery.firstName}!`}
                       className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
+                      loading="lazy"
+                      decoding="async"
                       referrerPolicy="no-referrer"
                     />
 
@@ -169,7 +174,7 @@ export default function VACFamily() {
                 Browse Inventory
               </a>
               <a 
-                href="/financing" 
+                href="/apply-now" 
                 className="w-full sm:w-auto px-12 py-5 bg-white text-[#41456B] border-2 border-gray-100 font-bold rounded-2xl hover:bg-gray-50 transition-all"
               >
                 Get Approved

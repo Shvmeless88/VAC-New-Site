@@ -4,6 +4,10 @@ import path from "path";
 import { Resend } from 'resend';
 import dotenv from 'dotenv';
 import { syncInventoryToGoogleSheets } from './src/lib/googleSheets';
+import { findDealByApplicationId, processAppraisal, isRealImage, formatInspection, type AppraisalPhoto } from './src/lib/appraisal';
+import multer from 'multer';
+import crypto from 'node:crypto';
+import { sendAs as gmailSendAs, gmailAs, vacSignatureHtml } from './src/lib/gmailDelegate';
 
 dotenv.config();
 
@@ -264,9 +268,119 @@ function getResendClient() {
   return resendClient;
 }
 
+// --- Meta Conversions API (server-side) -------------------------------------
+// Sends a reliable server-to-server "Lead" event to Meta so ad optimization and
+// reporting aren't limited by browser pixel loss (iOS, ad blockers, cookies).
+// Inert until META_CAPI_ACCESS_TOKEN is set — safe to ship before it's configured.
+function hashSha256(value: string) {
+  return crypto.createHash('sha256').update(value.trim().toLowerCase()).digest('hex');
+}
+
+function readCookie(req: any, name: string): string | undefined {
+  const raw = req?.headers?.cookie;
+  if (!raw) return undefined;
+  const found = raw.split(';').map((c: string) => c.trim()).find((c: string) => c.startsWith(name + '='));
+  return found ? decodeURIComponent(found.slice(name.length + 1)) : undefined;
+}
+
+async function sendMetaLeadEvent(req: any, opts: { email?: string; phone?: string; eventId: string; sourceUrl?: string }) {
+  const pixelId = process.env.META_PIXEL_ID || process.env.VITE_FB_PIXEL_ID;
+  const token = process.env.META_CAPI_ACCESS_TOKEN;
+  if (!pixelId || !token) return; // not configured yet — no-op
+
+  try {
+    const userData: any = {};
+    if (opts.email) userData.em = [hashSha256(opts.email)];
+    if (opts.phone) {
+      let digits = opts.phone.replace(/\D/g, '');
+      if (digits.length === 10) digits = '1' + digits; // default to Canada/US country code
+      if (digits) userData.ph = [crypto.createHash('sha256').update(digits).digest('hex')];
+    }
+    const fbp = readCookie(req, '_fbp'); if (fbp) userData.fbp = fbp;
+    const fbc = readCookie(req, '_fbc'); if (fbc) userData.fbc = fbc;
+    const ip = ((req.headers['x-forwarded-for'] as string) || '').split(',')[0].trim() || req.ip;
+    if (ip) userData.client_ip_address = ip;
+    const ua = req.headers['user-agent']; if (ua) userData.client_user_agent = ua;
+
+    const payload = {
+      data: [{
+        event_name: 'Lead',
+        event_time: Math.floor(Date.now() / 1000),
+        action_source: 'website',
+        event_id: opts.eventId,
+        ...(opts.sourceUrl ? { event_source_url: opts.sourceUrl } : {}),
+        user_data: userData,
+      }],
+    };
+
+    const resp = await fetchWithTimeout(
+      `https://graph.facebook.com/v21.0/${pixelId}/events?access_token=${token}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
+    );
+    if (!resp.ok) {
+      console.error('[META CAPI] Non-OK response:', resp.status, await resp.text());
+    } else {
+      console.log('[META CAPI] Lead event sent:', opts.eventId);
+    }
+  } catch (err) {
+    console.error('[META CAPI] Failed to send Lead event:', err);
+  }
+}
+
+// --- TikTok Events API (server-side) ----------------------------------------
+// Mirror of the Meta CAPI helper: sends a reliable server-side "SubmitForm"
+// (lead) event to TikTok. Inert until TIKTOK_ACCESS_TOKEN is set.
+async function sendTikTokLeadEvent(req: any, opts: { email?: string; phone?: string; eventId: string; sourceUrl?: string }) {
+  const pixelCode = process.env.TIKTOK_PIXEL_ID || 'CN57RK3C77UBB5H8V0R0';
+  const token = process.env.TIKTOK_ACCESS_TOKEN;
+  if (!pixelCode || !token) return; // not configured yet — no-op
+
+  try {
+    const user: any = {};
+    if (opts.email) user.email = hashSha256(opts.email);
+    if (opts.phone) {
+      let digits = opts.phone.replace(/\D/g, '');
+      if (digits.length === 10) digits = '1' + digits;
+      // TikTok expects E.164 (with +), hashed
+      user.phone = crypto.createHash('sha256').update('+' + digits).digest('hex');
+    }
+    const ip = ((req.headers['x-forwarded-for'] as string) || '').split(',')[0].trim() || req.ip;
+    if (ip) user.ip = ip;
+    const ua = req.headers['user-agent']; if (ua) user.user_agent = ua;
+    const ttp = readCookie(req, '_ttp'); if (ttp) user.ttp = ttp;
+    const ttclid = readCookie(req, 'ttclid'); if (ttclid) user.ttclid = ttclid;
+
+    const payload = {
+      event_source: 'web',
+      event_source_id: pixelCode,
+      data: [{
+        event: 'SubmitForm',
+        event_time: Math.floor(Date.now() / 1000),
+        event_id: opts.eventId,
+        user,
+        ...(opts.sourceUrl ? { page: { url: opts.sourceUrl } } : {}),
+      }],
+    };
+
+    const resp = await fetchWithTimeout('https://business-api.tiktok.com/open_api/v1.3/event/track/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Access-Token': token },
+      body: JSON.stringify(payload),
+    });
+    const body: any = await resp.json().catch(() => ({}));
+    if (resp.ok && body.code === 0) {
+      console.log('[TIKTOK EAPI] Lead event sent:', opts.eventId);
+    } else {
+      console.error('[TIKTOK EAPI] Non-OK response:', resp.status, JSON.stringify(body));
+    }
+  } catch (err) {
+    console.error('[TIKTOK EAPI] Failed to send Lead event:', err);
+  }
+}
+
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 
@@ -277,6 +391,301 @@ async function startServer() {
       return res.redirect(301, "https://vehicleapprovalcentre.com/financing");
     }
     next();
+  });
+
+  // The appraisal form is an unlisted, rep-sent link — never a search result.
+  // The page also sets a noindex <meta>, but that only counts if the crawler
+  // runs our JS; this header is honoured unconditionally. Deliberately NOT
+  // added to robots.txt: a Disallow rule would publicly advertise the URL to
+  // anyone who reads the file.
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/appraisal") || req.path.startsWith("/quick-add")) {
+      res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive, noimageindex");
+    }
+    next();
+  });
+
+  // --- Rate limiting ---
+  // Application IDs are semi-guessable (surname + 4 digits), so an unthrottled
+  // verify endpoint is a brute-forcer's dream: confirm a valid ID, then POST
+  // junk onto that customer's real deal. Nothing here exposes customer data,
+  // but vandalism is still worth locking out.
+  //
+  // In-memory is deliberate: we run min-instances=1 and low traffic, so a shared
+  // store would be more moving parts than the threat warrants. If this ever
+  // scales out, the limit becomes per-instance and should move to Redis.
+  const rateBuckets = new Map<string, number[]>();
+
+  const clientIp = (req: express.Request): string =>
+    (
+      req.get("cf-connecting-ip") || // Cloudflare sits in front of us
+      req.get("x-forwarded-for")?.split(",")[0] ||
+      req.socket.remoteAddress ||
+      "unknown"
+    ).trim();
+
+  const rateLimit = (key: string, max: number, windowMs: number): boolean => {
+    const now = Date.now();
+    const hits = (rateBuckets.get(key) || []).filter((t) => now - t < windowMs);
+    if (hits.length >= max) {
+      rateBuckets.set(key, hits);
+      return false;
+    }
+    hits.push(now);
+    rateBuckets.set(key, hits);
+    return true;
+  };
+
+  // Keep the map from growing without bound.
+  setInterval(() => {
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    for (const [key, hits] of rateBuckets) {
+      const live = hits.filter((t) => t > cutoff);
+      if (live.length === 0) rateBuckets.delete(key);
+      else rateBuckets.set(key, live);
+    }
+  }, 10 * 60 * 1000).unref();
+
+  /** Trim a customer-supplied field to something sane before it reaches the CRM. */
+  const cap = (value: unknown, max: number): string =>
+    typeof value === "string" ? value.trim().slice(0, max) : "";
+
+  // --- Trade-in appraisal (replaces the Typeform → Sheets flow) ---
+  // Photos are compressed in the browser before upload, so these ceilings are
+  // generous headroom rather than an expected size.
+  const appraisalUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 12 * 1024 * 1024, files: 20 },
+    fileFilter: (_req, file, cb) => {
+      if (/^image\//.test(file.mimetype)) return cb(null, true);
+      cb(new Error("Only image files are allowed."));
+    },
+  });
+
+  // Lets the form confirm an application number BEFORE the customer photographs
+  // their whole car. Deliberately returns only a boolean: application IDs are
+  // semi-guessable (surname + digits), so echoing back the customer's name here
+  // would turn this into a data-leak endpoint.
+  app.get("/api/appraisal/verify", async (req, res) => {
+    // A real customer types their number once; 30 lookups in 10 minutes is
+    // generous for them and useless for a brute-forcer.
+    if (!rateLimit(`verify:${clientIp(req)}`, 30, 10 * 60 * 1000)) {
+      return res.status(429).json({ error: "Too many attempts. Please try again shortly." });
+    }
+
+    const applicationId = cap(req.query.app, 32);
+    if (!applicationId) return res.status(400).json({ error: "Missing application number." });
+
+    try {
+      const deal = await findDealByApplicationId(applicationId);
+      return res.json({ found: Boolean(deal) });
+    } catch (err: any) {
+      console.error("[APPRAISAL] verify failed:", err?.message);
+      // Fail open — never block a real customer because our lookup broke.
+      return res.json({ found: null });
+    }
+  });
+
+  app.post("/api/appraisal", appraisalUpload.any(), async (req, res) => {
+    // A customer submits once, maybe twice if something goes wrong. Ten an hour
+    // leaves plenty of room for a genuine retry while capping how much junk a
+    // single source can push into the CRM.
+    if (!rateLimit(`submit:${clientIp(req)}`, 10, 60 * 60 * 1000)) {
+      return res
+        .status(429)
+        .json({ error: "Too many submissions. Please try again later or call us." });
+    }
+
+    try {
+      const b = req.body || {};
+      const leadToken = cap(b.leadToken, 64);
+      const applicationId = cap(b.applicationId, 32) || (leadToken ? "CRM-LINK" : "");
+
+      if (!applicationId) {
+        return res.status(400).json({ error: "Application number is required." });
+      }
+
+      const files = (req.files as Express.Multer.File[]) || [];
+      const photos: AppraisalPhoto[] = files.map((f) => ({
+        slot: f.fieldname.replace(/^photo_/, ""),
+        originalName: f.originalname,
+        mimetype: f.mimetype,
+        buffer: f.buffer,
+      }));
+
+      const result = await processAppraisal(
+        {
+          applicationId,
+          year: cap(b.year, 8),
+          make: cap(b.make, 40),
+          model: cap(b.model, 40),
+          trim: cap(b.trim, 40),
+          kilometers: cap(b.kilometers, 10),
+          inspectionExpiry: cap(b.inspectionExpiry, 40),
+          vin: cap(b.vin, 20),
+          notes: cap(b.notes, 2000),
+        },
+        photos
+      );
+
+      // CRM path: attach the appraisal to the lead — photos go to Storage (labelled by slot), details +
+      // thumbnails land in the thread, card gets a flag, owning rep gets a heads-up text.
+      if (leadToken) {
+        try {
+          const { admin, db } = await getFirestoreAdmin();
+          const q = await db.collection("crmLeads").where("tradeToken", "==", leadToken).limit(1).get();
+          if (!q.empty) {
+            const d = q.docs[0]; const now = new Date().toISOString();
+            const SLOT_LABELS: Record<string, string> = { vin: "VIN plate", registration: "Vehicle registration", front: "Front", right: "Right side", left: "Left side", back: "Back", "interior-front": "Interior — front", "interior-back": "Interior — back", dash: "Dash (engine running, showing km)", tire: "Tire close-up" };
+            const labelFor = (slot: string) => SLOT_LABELS[slot] || (slot.startsWith("damage") ? `Damage photo${slot.replace(/^damage-?/, "") ? ` ${slot.replace(/^damage-?/, "")}` : ""}` : slot);
+            const bucket = admin.storage().bucket("gen-lang-client-0753805028.firebasestorage.app");
+            const uploaded: { slot: string; label: string; url: string; name: string }[] = [];
+            for (const ph of photos) {
+              if (!isRealImage(ph.buffer)) continue;
+              try {
+                const ext = (ph.originalName.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+                const tokenId = crypto.randomUUID();
+                const objectPath = `crm-tradeins/${d.id}/${Date.now()}_${ph.slot.replace(/[^a-z0-9-]/gi, "_")}.${ext}`;
+                await bucket.file(objectPath).save(ph.buffer, { contentType: ph.mimetype || "image/jpeg", metadata: { metadata: { firebaseStorageDownloadTokens: tokenId } } });
+                const url = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${tokenId}`;
+                uploaded.push({ slot: ph.slot, label: labelFor(ph.slot), url, name: `${labelFor(ph.slot)}.${ext}` });
+              } catch (e: any) { console.error("[APPRAISAL] CRM photo upload failed:", ph.slot, e?.message || e); }
+            }
+            const veh = [cap(b.year, 8), cap(b.make, 40), cap(b.model, 40), cap(b.trim, 40)].filter(Boolean).join(" ");
+            const kmNum = Number(String(cap(b.kilometers, 10) || "").replace(/[^0-9]/g, ""));
+            const kmTxt = kmNum > 0 ? `${kmNum.toLocaleString("en-CA")} km` : "—";
+            const noteLines = [
+              "🚗 Trade-In Appraisal Submitted",
+              "",
+              `Vehicle: ${veh || "—"}`,
+              `Odometer: ${kmTxt}`,
+              `Safety sticker expires: ${formatInspection(cap(b.inspectionExpiry, 40)) || "—"}`,
+              `VIN: ${cap(b.vin, 20) || "— (see VIN photo)"}`,
+              ...(cap(b.notes, 2000) ? ["", `Customer notes: ${cap(b.notes, 2000)}`] : []),
+              "",
+              uploaded.length ? `Photos attached (${uploaded.length}):\n${uploaded.map((u) => u.label).join(", ")}` : "No photos uploaded.",
+            ];
+            const details = noteLines.join("\n");
+            const photoList = "";
+            await d.ref.update({
+              hasTradeIn: "Yes",
+              tradeIn: { year: cap(b.year, 8), make: cap(b.make, 40), model: cap(b.model, 40), trim: cap(b.trim, 40), kilometers: cap(b.kilometers, 10), vin: cap(b.vin, 20), inspectionExpiry: cap(b.inspectionExpiry, 40), notes: cap(b.notes, 2000), photos: uploaded.length, photoUrls: uploaded, submittedAt: now },
+              tradeSubmittedAt: now, updatedAt: now,
+              activityLog: admin.firestore.FieldValue.arrayUnion({ text: details, by: "Customer", at: now, kind: "note", tradeIn: true, media: uploaded.map((u) => u.url), mediaLabels: uploaded.map((u) => u.label) }),
+            });
+            if (d.get("owner")) notifyRepBySms(db, d.get("owner"), `🚗 ${[d.get("firstName"), d.get("lastName")].filter(Boolean).join(" ") || "A lead"} just submitted their trade-in (${veh || "vehicle"}, ${uploaded.length} photo${uploaded.length === 1 ? "" : "s"}).\nOpen: https://vehicleapprovalcentre.com/admin?tab=crm&lead=${d.id}`).catch(() => {});
+          }
+        } catch (e: any) { console.error("[APPRAISAL] CRM attach failed (non-fatal):", e?.message || e); }
+      }
+
+      // A submission that didn't match a deal is still captured and the team is
+      // alerted, so we thank the customer rather than making them re-shoot.
+      return res.json({
+        success: true,
+        matched: result.matched,
+        photosUploaded: result.photosUploaded,
+        photosFailed: result.photosFailed,
+      });
+    } catch (err: any) {
+      console.error("[APPRAISAL] submission failed:", err?.message);
+      return res.status(500).json({ error: "We couldn't submit your appraisal. Please try again." });
+    }
+  });
+
+  // --- Quick-add delivery photo (logistics manager, mobile, PIN-gated) ---
+  // Replaces the two-step "post in chat, then re-upload in admin" flow: one
+  // mobile submission writes straight to the `deliveries` collection that the
+  // VAC Family page reads. Photo is compressed in the browser before upload.
+  const deliveryUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 12 * 1024 * 1024, files: 1 },
+    fileFilter: (_req, file, cb) => {
+      if (/^image\//.test(file.mimetype)) return cb(null, true);
+      cb(new Error("Only image files are allowed."));
+    },
+  });
+
+  // Only staff with a verified @drivevac.ca Google account may publish. We
+  // verify the Firebase ID token server-side — a domain check in the browser
+  // alone would be trivially bypassable by POSTing straight to this endpoint.
+  const DELIVERY_ALLOWED_DOMAIN = "drivevac.ca";
+
+  const verifyDriveVacUser = async (
+    authHeader: string | undefined
+  ): Promise<{ ok: true; email: string } | { ok: false; error: string }> => {
+    const token = (authHeader || "").replace(/^Bearer\s+/i, "").trim();
+    if (!token) return { ok: false, error: "Not signed in." };
+    try {
+      const { admin } = await getFirestoreAdmin();
+      const decoded = await admin.auth().verifyIdToken(token);
+      const email = (decoded.email || "").toLowerCase();
+      if (!decoded.email_verified) return { ok: false, error: "Email not verified." };
+      if (!email.endsWith(`@${DELIVERY_ALLOWED_DOMAIN}`)) {
+        return { ok: false, error: `Must sign in with a @${DELIVERY_ALLOWED_DOMAIN} account.` };
+      }
+      return { ok: true, email };
+    } catch (err: any) {
+      console.warn("[DELIVERY] token verify failed:", err?.message);
+      return { ok: false, error: "Sign-in expired. Please sign in again." };
+    }
+  };
+
+  app.post("/api/delivery", deliveryUpload.single("photo"), async (req, res) => {
+    if (!rateLimit(`delivery:${clientIp(req)}`, 30, 60 * 60 * 1000)) {
+      return res.status(429).json({ error: "Too many submissions. Please try again later." });
+    }
+
+    const auth = await verifyDriveVacUser(req.get("authorization"));
+    if (!auth.ok) {
+      return res.status(401).json({ error: auth.error });
+    }
+
+    const b = req.body || {};
+
+    const firstName = cap(b.firstName, 40);
+    const vehicle = cap(b.vehicle, 60);
+    if (!firstName || !vehicle) {
+      return res.status(400).json({ error: "First name and vehicle are required." });
+    }
+
+    const file = req.file;
+    if (!file || !isRealImage(file.buffer)) {
+      return res.status(400).json({ error: "A valid photo is required." });
+    }
+
+    try {
+      const { admin, db } = await getFirestoreAdmin();
+      const bucket = admin.storage().bucket("gen-lang-client-0753805028.firebasestorage.app");
+
+      // Store like the other delivery photos, with a download token so the
+      // resulting public URL behaves identically to admin-uploaded ones.
+      const token = crypto.randomUUID();
+      const objectPath = `deliveries/${Date.now()}_quickadd.jpg`;
+      await bucket.file(objectPath).save(file.buffer, {
+        contentType: "image/jpeg",
+        metadata: { metadata: { firebaseStorageDownloadTokens: token } },
+      });
+      const photoUrl =
+        `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
+        `${encodeURIComponent(objectPath)}?alt=media&token=${token}`;
+
+      await db.collection("deliveries").add({
+        firstName,
+        lastInitial: cap(b.lastInitial, 4),
+        vehicle,
+        city: cap(b.city, 60),
+        province: cap(b.province, 40),
+        photoUrl,
+        addedBy: auth.email, // audit trail: which staff member published it
+        createdAt: admin.firestore.Timestamp.now(),
+      });
+
+      console.log(`[DELIVERY] Quick-add published by ${auth.email}: ${firstName} — ${vehicle}`);
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error("[DELIVERY] Quick-add failed:", err?.message);
+      return res.status(500).json({ error: "Couldn't publish. Please try again." });
+    }
   });
 
   // API Routes
@@ -334,6 +743,22 @@ async function startServer() {
           leadPayload[sourceKey] = sourceValue;
         }
 
+        // Map contact info into the lead/deal custom fields so it carries over
+        // to the deal (leads and deals share custom fields in Pipedrive).
+        const firstNameKey = process.env.PIPEDRIVE_LEAD_FIRST_NAME_FIELD_KEY;
+        const lastNameKey = process.env.PIPEDRIVE_LEAD_LAST_NAME_FIELD_KEY;
+        const emailKey = process.env.PIPEDRIVE_LEAD_EMAIL_FIELD_KEY;
+        const phoneKey = process.env.PIPEDRIVE_LEAD_PHONE_FIELD_KEY;
+        if (emailKey && emailKey.trim() && email) leadPayload[emailKey] = email;
+        if (phoneKey && phoneKey.trim() && phone) leadPayload[phoneKey] = phone;
+        if (name && name.trim()) {
+          const parts = name.trim().split(' ');
+          const fName = parts[0];
+          const lName = parts.slice(1).join(' ');
+          if (firstNameKey && firstNameKey.trim() && fName) leadPayload[firstNameKey] = fName;
+          if (lastNameKey && lastNameKey.trim() && lName) leadPayload[lastNameKey] = lName;
+        }
+
         const leadResponse = await fetchWithTimeout(`https://api.pipedrive.com/v1/leads?api_token=${apiToken}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -377,6 +802,10 @@ async function startServer() {
         });
       }
 
+      const convEventId1 = crypto.randomUUID();
+      const convUrl1 = req.body.vehicleUrl || req.get('referer');
+      await sendMetaLeadEvent(req, { email, phone, eventId: convEventId1, sourceUrl: convUrl1 });
+      await sendTikTokLeadEvent(req, { email, phone, eventId: convEventId1, sourceUrl: convUrl1 });
       res.json({ success: true, isUpdate: !!recentLead });
     } catch (err: any) {
       console.error("Check availability error:", err);
@@ -728,6 +1157,10 @@ async function startServer() {
         }
       }
 
+      const convEventId2 = crypto.randomUUID();
+      const convUrl2 = vehicleUrl || req.get('referer');
+      await sendMetaLeadEvent(req, { email, phone, eventId: convEventId2, sourceUrl: convUrl2 });
+      await sendTikTokLeadEvent(req, { email, phone, eventId: convEventId2, sourceUrl: convUrl2 });
       res.json({ success: true, isUpdate: existingRecordFound, personId: finalPersonId, leadId: leadId, dealId: dealId });
     } catch (err: any) {
       console.error("Lead creation error:", err);
@@ -790,6 +1223,22 @@ async function startServer() {
           leadPayload[sourceKey] = sourceValue;
         }
 
+        // Map contact info into the lead/deal custom fields so it carries over
+        // to the deal (leads and deals share custom fields in Pipedrive).
+        const firstNameKey = process.env.PIPEDRIVE_LEAD_FIRST_NAME_FIELD_KEY;
+        const lastNameKey = process.env.PIPEDRIVE_LEAD_LAST_NAME_FIELD_KEY;
+        const emailKey = process.env.PIPEDRIVE_LEAD_EMAIL_FIELD_KEY;
+        const phoneKey = process.env.PIPEDRIVE_LEAD_PHONE_FIELD_KEY;
+        if (emailKey && emailKey.trim() && email) leadPayload[emailKey] = email;
+        if (phoneKey && phoneKey.trim() && phone) leadPayload[phoneKey] = phone;
+        if (name && name.trim()) {
+          const parts = name.trim().split(' ');
+          const fName = parts[0];
+          const lName = parts.slice(1).join(' ');
+          if (firstNameKey && firstNameKey.trim() && fName) leadPayload[firstNameKey] = fName;
+          if (lastNameKey && lastNameKey.trim() && lName) leadPayload[lastNameKey] = lName;
+        }
+
         const leadResponse = await fetchWithTimeout(`https://api.pipedrive.com/v1/leads?api_token=${apiToken}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -845,6 +1294,10 @@ async function startServer() {
         console.error("Failed to send scout email notification:", emailErr);
       }
 
+      const convEventId3 = crypto.randomUUID();
+      const convUrl3 = req.get('referer');
+      await sendMetaLeadEvent(req, { email, phone, eventId: convEventId3, sourceUrl: convUrl3 });
+      await sendTikTokLeadEvent(req, { email, phone, eventId: convEventId3, sourceUrl: convUrl3 });
       res.json({ success: true });
     } catch (err: any) {
       console.error("Scout request error:", err);
@@ -1005,8 +1458,11 @@ async function startServer() {
             const descLower = desc.toLowerCase();
             const catLower = cat.toLowerCase();
 
-            // Strict Filter
-            const ignoreList = ['vin', 'weights', 'dimensions', 'curb', 'chassis', 'suspension', 'warranty', 'axle', 'gvwr', 'capacities'];
+            // Strict Filter — drop specs noise AND non-feature labels that
+            // MarketCheck mixes into high_value_features (body class, powertrain
+            // type, vague autonomy tags) so shoppers see real features only.
+            const ignoreList = ['vin', 'weights', 'dimensions', 'curb', 'chassis', 'suspension', 'warranty', 'axle', 'gvwr', 'capacities',
+              'transmission', 'suv', 'sedan', 'coupe', 'hatchback', 'minivan', 'pickup', 'mid-size', 'upper medium', 'lower medium', 'compact car', 'full-size', 'autonomous drive'];
             if (ignoreList.some(term => descLower.includes(term) || catLower.includes(term))) return;
             
             // Categorization
@@ -1048,23 +1504,12 @@ async function startServer() {
 
           console.log(`[Marketcheck] Processing data for VIN: ${vin}. Keys found: ${Object.keys(itemData).join(', ')}`);
 
-          // Search common locations for features and equipment
-          const searchKeys = [
-            'features', 
-            'installed_equipment', 
-            'high_value_features', 
-            'comfort_and_convenience', 
-            'entertainment_and_media', 
-            'safety_and_security', 
-            'standard_features',
-            'optional_features',
-            'std_features',
-            'opt_features',
-            'build', 
-            'extra', 
-            'equipment', 
-            'specs'
-          ];
+          // Only read MarketCheck's CURATED high-value features. The raw
+          // `features`/`installed_equipment` lists carry 170+ granular entries
+          // (every airbag, tire spec, head restraint) that buried the real
+          // features and produced the messy output. high_value_features is the
+          // shopper-relevant set MarketCheck already flags.
+          const searchKeys = ['high_value_features'];
           
           searchKeys.forEach(key => {
             if (itemData[key]) {
@@ -1094,12 +1539,8 @@ async function startServer() {
             }
           });
 
-          // Also check for 'features' at the root if it's an array of strings
-          if (Array.isArray(itemData.features)) {
-            itemData.features.forEach((f: string) => {
-              if (typeof f === 'string') mapCategory('features', { description: f });
-            });
-          }
+          // (Intentionally NOT reading the root 170+ item `features` list —
+          // high_value_features above is the curated, shopper-facing set.)
 
           let packages: { name: string; msrp?: number }[] = [];
           if (Array.isArray(itemData.installed_options_details)) {
@@ -1144,15 +1585,18 @@ async function startServer() {
             curbWeight: itemData.weight || itemData.curb_weight,
             manufacturerCode: itemData.manufacturer_code,
             packageCode: itemData.package_code,
-            marketPriceRating: itemData.market_rank_data?.rank_text || itemData.market_rank_data?.rank || (itemData.market_rank_data?.vdp_market_value ? "Fair Price" : undefined),
-            marketPriceDifference: itemData.market_rank_data?.diff_from_median || itemData.market_rank_data?.price_diff,
-            accidents: itemData.history_data?.accident_count || (itemData.history_data?.has_accidents ? 1 : 0),
-            owners: itemData.history_data?.owner_count || itemData.history_data?.owners_count || 1
+            // Market position from LIVE Canadian comparable listings (see below).
+            marketPriceRating: itemData.market_comps?.rating,
+            marketPriceDifference: itemData.market_comps?.difference,
+            marketSampleSize: itemData.market_comps?.count,
+            marketMedian: itemData.market_comps?.median,
           };
         };
 
-        // Use NeoVIN exclusively as requested
-        const neoResponse = await fetchWithTimeout(`https://api.marketcheck.com/v2/decode/car/neovin/${vin}?api_key=${apiKey}&include_generic=true&include_available_options=true`, {
+        // NeoVIN full-specs endpoint (the /specs suffix is required — without it
+        // the API 404s, which is why the decode used to silently fall back to
+        // NHTSA and never populated features).
+        const neoResponse = await fetchWithTimeout(`https://api.marketcheck.com/v2/decode/car/neovin/${vin}/specs?api_key=${apiKey}&include_generic=true&include_available_options=true`, {
           headers: {
             'Accept': 'application/json'
           }
@@ -1165,38 +1609,53 @@ async function startServer() {
           console.log(`Marketcheck NeoVIN status ${neoResponse.status}, falling back to basic specs`);
         }
 
-        // Always try to fetch specs to supplement features
-        const specResponse = await fetchWithTimeout(`https://mc-api.marketcheck.com/v2/decode/car/${vin}/specs?api_key=${apiKey}&include_generic=true&include_available_options=true`);
-        if (specResponse.ok) {
-          const specData = await specResponse.json();
-          console.log(`Successfully fetched Marketcheck specs for ${vin}`);
-          
-          // Merge specs into finalData
-          finalData = { ...finalData, ...specData };
-        }
+        // (Dropped the extra /specs, /market/rank and /history calls: NeoVIN
+        // already carries the features we use; the US-only /market/rank never
+        // populated for Canadian cars; and vehicle history comes from Carfax.)
 
-        // Fetch Market Rank and Price Rating
+        // Market position from LIVE Canadian comparable listings. This is the
+        // Canada-reliable replacement for /market/rank — we pull the median
+        // asking price of the same year/make/model in a mileage band and rate
+        // this car's price against it. Best-effort: never blocks the decode.
         try {
-          const rankResponse = await fetchWithTimeout(`https://api.marketcheck.com/v2/market/rank/car/${vin}?api_key=${apiKey}`);
-          if (rankResponse.ok) {
-            const rankData = await rankResponse.json();
-            console.log(`Successfully fetched Marketcheck rank for ${vin}`);
-            finalData.market_rank_data = rankData;
+          const askingPrice = Number(req.query.price) || undefined;
+          const km = Number(req.query.miles) || undefined;
+          const yr = finalData.year, mk = finalData.make, md = finalData.model;
+          if (yr && mk && md) {
+            const compUrl = new URL('https://api.marketcheck.com/v2/search/car/active');
+            compUrl.searchParams.set('api_key', apiKey);
+            compUrl.searchParams.set('country', 'CA');
+            compUrl.searchParams.set('year', String(yr));
+            compUrl.searchParams.set('make', String(mk));
+            compUrl.searchParams.set('model', String(md));
+            if (km) compUrl.searchParams.set('miles_range', `${Math.max(0, km - 35000)}-${km + 35000}`);
+            compUrl.searchParams.set('stats', 'price');
+            compUrl.searchParams.set('rows', '0');
+            const compRes = await fetchWithTimeout(compUrl.toString());
+            if (compRes.ok) {
+              const cj: any = await compRes.json();
+              const st = cj?.data?.stats?.price || cj?.stats?.price;
+              const median = st?.median, count = st?.count || 0;
+              // Need a credible sample before showing any badge.
+              if (median && count >= 12) {
+                const comps: any = { median, count, low: st.min, high: st.max };
+                if (askingPrice) {
+                  const ratio = askingPrice / median;
+                  comps.rating = ratio <= 0.94 ? 'Great Price'
+                    : ratio <= 1.00 ? 'Good Price'
+                    : ratio <= 1.08 ? 'Fair Price'
+                    : 'High Price';
+                  comps.difference = Math.round(median - askingPrice); // + = below market
+                }
+                finalData.market_comps = comps;
+                console.log(`[Marketcheck] ${count} CA comps for ${yr} ${mk} ${md}, median $${median}`);
+              } else {
+                console.log(`[Marketcheck] Only ${count} CA comps — skipping price rating`);
+              }
+            }
           }
-        } catch (rankErr) {
-          console.log("Marketcheck Rank API skip:", rankErr);
-        }
-
-        // Fetch History Indicators
-        try {
-          const historyResponse = await fetchWithTimeout(`https://api.marketcheck.com/v2/history/car/${vin}?api_key=${apiKey}`);
-          if (historyResponse.ok) {
-            const historyData = await historyResponse.json();
-            console.log(`Successfully fetched Marketcheck history for ${vin}`);
-            finalData.history_data = historyData;
-          }
-        } catch (histErr) {
-          console.log("Marketcheck History API skip:", histErr);
+        } catch (compErr) {
+          console.log("Marketcheck comps skip:", compErr);
         }
 
         if (Object.keys(finalData).length > 0) {
@@ -1361,6 +1820,2579 @@ async function startServer() {
       res.status(500).json({ error: 'Internal error' });
     }
   });
+
+  // --- Vehicle Approval Centre pre-approval funnel → lead buyers ---
+  // Served at apply.vehicleapprovalcentre.com. This endpoint collects a
+  // completed, consented application, PERSISTS it (Firestore `dvLeads`), and
+  // fans it out to one or more configurable buyer webhooks. It is deliberately
+  // isolated from the VAC dealership pipeline: it NEVER touches Pipedrive / the
+  // AI queue (that lives in POST /api/leads). Applications here are a separate
+  // product that gets sold to outside dealers.
+  //
+  // Config (env):
+  //   BUYER_WEBHOOK_URLS       comma-separated buyer/distribution endpoints
+  //   BUYER_WEBHOOK_URL        single endpoint (added to the list above)
+  //   N8N_LEAD_WEBHOOK_URL     legacy single endpoint (kept for back-compat)
+  //   DV_DEDUPE_WINDOW_MINUTES suppress re-selling the same email/phone within
+  //                            this many minutes (default 1440 = 24h)
+  const DV_CONSENT_VERSION = "2026-08-03-v2"; // bump when the consent wording changes
+  const DV_DEDUPE_WINDOW_MINUTES = Number(process.env.DV_DEDUPE_WINDOW_MINUTES) || 1440;
+
+  const buyerWebhooks = (): string[] => {
+    const list = [
+      ...(process.env.BUYER_WEBHOOK_URLS || "").split(","),
+      process.env.BUYER_WEBHOOK_URL || "",
+      process.env.N8N_LEAD_WEBHOOK_URL || "",
+    ].map((s) => s.trim()).filter(Boolean);
+    return Array.from(new Set(list)); // de-dupe if the same URL is listed twice
+  };
+
+  const isValidEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+  const normPhone = (p: any) => (p || "").toString().replace(/\D/g, "");
+
+  // --- Lead distribution: which dealer buys each lead (EXCLUSIVE model) ---
+  // Each completed application is assigned to exactly ONE dealer and emailed to
+  // them via Resend. Single dealer today; onboarding another buyer later (by
+  // territory or monthly cap) is just another entry here + smarter assignDealer()
+  // — no other code changes. Dealer address/sender are overridable via env.
+  type Dealer = { id: string; name: string; email: string; active: boolean; territories?: string[]; monthlyCap?: number };
+  const DEALERS: Dealer[] = [
+    {
+      id: "arc-auto",
+      name: "Arc Auto Sales (Colin Ledaire)",
+      email: process.env.LEAD_DEALER_EMAIL || "colin@arcautosales.ca",
+      active: true,
+      territories: [],   // empty = all provinces
+      monthlyCap: 150,
+    },
+    {
+      id: "vac",
+      name: "Vehicle Approval Centre",
+      email: process.env.VAC_DEALER_EMAIL || "j.jackson@drivevac.ca",
+      // Turned OFF 2026-08-17 — VAC now gets its own leads via /apply-now → its own
+      // Pipedrive, so the funnel (apply.*) routes 100% to Arc Auto. Flip back to true to re-enable.
+      active: false,
+      territories: [],
+    },
+  ];
+  const LEAD_FROM_EMAIL = process.env.LEAD_FROM_EMAIL || "VAC Leads <leads@drivevac.ca>";
+
+  // Assign a lead to ONE dealer (exclusive). With multiple active dealers we
+  // round-robin evenly via a persistent counter (strict alternate, going forward).
+  // Add territory/weight rules here later. Falls back to the first active dealer
+  // so a lead is never lost if the counter read fails.
+  // Dealer on/off is admin-editable — stored in Firestore (dvRouting/dealerStatus),
+  // overriding each dealer's code default. Returns the effectively-active dealers.
+  const effectiveDealers = async (db: any): Promise<Dealer[]> => {
+    let overrides: Record<string, boolean> = {};
+    try {
+      const snap = await db.collection("dvRouting").doc("dealerStatus").get();
+      if (snap.exists) overrides = snap.data() || {};
+    } catch {}
+    return DEALERS.filter((d) => (typeof overrides[d.id] === "boolean" ? overrides[d.id] : d.active));
+  };
+
+  const assignDealer = async (db: any): Promise<Dealer | null> => {
+    const active = await effectiveDealers(db);
+    if (active.length <= 1) return active[0] || null;
+    try {
+      const ref = db.collection("dvRouting").doc("roundRobin");
+      const idx = await db.runTransaction(async (tx: any) => {
+        const snap = await tx.get(ref);
+        const cur = snap.exists ? (snap.data().next || 0) : 0;
+        tx.set(ref, { next: cur + 1 }, { merge: true });
+        return cur;
+      });
+      return active[idx % active.length];
+    } catch {
+      return active[0];
+    }
+  };
+
+  // Human-readable lead sheet the dealer can act on the moment it lands.
+  const renderLeadEmail = (r: any): string => {
+    const a = r.applicant || {};
+    const addr = a.address || {};
+    const v = r.vehicle || {};
+    const e = r.employment || {};
+    const h = r.housing || {};
+    const el = r.eligibility || {};
+    const mk = r.marketing || {};
+    const fmt = (iso: string) => { try { return new Date(iso).toLocaleString("en-CA", { timeZone: "America/Halifax" }); } catch { return iso; } };
+    const money = (x: any) => (x ? `$${x}` : "");
+    // DOB is captured DD/MM/YYYY on the funnel; render the month as a word so a
+    // dealer can never misread it as American MM/DD (e.g. 07/05/1992 -> 7 May 1992).
+    const fmtDob = (s: any) => {
+      if (typeof s !== "string") return s;
+      const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (!m) return s;
+      const dd = +m[1], mm = +m[2];
+      if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return s;
+      const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      return `${dd} ${M[mm - 1]} ${m[3]}`;
+    };
+    const row = (label: string, val: any) =>
+      val === undefined || val === null || val === ""
+        ? ""
+        : `<tr><td style="padding:4px 14px 4px 0;color:#6b7280;white-space:nowrap;vertical-align:top">${label}</td><td style="padding:4px 0;color:#111;font-weight:600;word-break:break-word">${val}</td></tr>`;
+    const section = (title: string, rows: string) =>
+      rows ? `<h3 style="margin:22px 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#41456B">${title}</h3><table style="border-collapse:collapse;font-size:14px">${rows}</table>` : "";
+    return `
+      <div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:620px;margin:0 auto;padding:24px;color:#111">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#7380FF">New Pre-Approval Lead</div>
+        <h2 style="margin:4px 0 2px;font-size:22px">${[a.firstName, a.lastName].filter(Boolean).join(" ") || "Applicant"}</h2>
+        <div style="color:#6b7280;font-size:13px">Submitted ${fmt(r.submittedAt)} (Atlantic)</div>
+        ${section("Contact", row("Phone", a.phone) + row("Email", a.email) + row("Date of birth", fmtDob(a.dob)) + row("Address", [addr.street, addr.suite, addr.city, addr.province, addr.postal].filter(Boolean).join(", ")))}
+        ${section("Vehicle", row("Looking for", v.type) + row("Budget", v.budgetBand) + row("Trade-in", v.tradeIn) + row("Down payment", money(v.downPayment)))}
+        ${section("Credit", row("Self-rating", (r.credit || {}).selfRating))}
+        ${section("Employment & income", row("Status", e.status) + row("Employer", e.employer) + row("Job title", e.jobTitle) + row("Income type", e.incomeType) + row("Gross income", money(e.grossIncome)) + row("Hours/week", e.hoursPerWeek) + row("Time on job", e.timeOnJob && (e.timeOnJob.years || e.timeOnJob.months) ? `${e.timeOnJob.years || 0}y ${e.timeOnJob.months || 0}m` : "") + row("Income source", e.incomeSource))}
+        ${section("Housing", row("Own/Rent", h.ownOrRent) + row("Monthly payment", money(h.monthlyPayment)) + row("Time at address", h.timeAtAddress && (h.timeAtAddress.years || h.timeAtAddress.months) ? `${h.timeAtAddress.years || 0}y ${h.timeAtAddress.months || 0}m` : ""))}
+        ${section("Eligibility", row("Citizen/PR", el.citizenOrPR) + row("Valid licence", el.validLicense))}
+        ${section("Marketing source", row("Source", mk.utm_source) + row("Medium", mk.utm_medium) + row("Campaign", mk.utm_campaign) + row("Content", mk.utm_content) + row("Term", mk.utm_term) + row("gclid", mk.gclid) + row("fbclid", mk.fbclid))}
+        <div style="margin-top:22px;padding:12px 14px;background:#f8fafc;border:1px solid #eef2f7;border-radius:8px;font-size:12px;color:#475569">
+          &#10003; Consent captured${r.consent?.timestamp ? " on " + fmt(r.consent.timestamp) : ""} &mdash; applicant authorized contact and a credit check (consent v${r.consent?.textVersion || "?"}, IP ${r.consent?.ip || "n/a"}).
+        </div>
+      </div>`;
+  };
+
+  // Dealership pre-approval form (vehicleapprovalcentre.com/apply-now, full-form style).
+  // UNLIKE /api/dv-lead (the lead-gen brokerage that sells to partners), this lands the
+  // applicant in the dealership's OWN Pipedrive as a LEAD — never a deal — with the full
+  // application in a note. Best-effort Firestore copy so nothing is ever lost.
+  // --- In-house CRM lead distribution (Phase A: event-driven round-robin) ---
+  // Business hours for auto-assignment: Mon–Fri, 9am–8pm Atlantic. Outside this
+  // window leads hold in the Inbox pool until the next business morning (and a rep
+  // being active). Fail-open: if the TZ calc ever throws, we don't block assignment.
+  const BIZ_TZ = "America/Halifax";
+  const BIZ_START = 9;   // 9am
+  const BIZ_END = 20;    // 8pm
+  const isBusinessHours = (): boolean => {
+    try {
+      const parts = new Intl.DateTimeFormat("en-US", { timeZone: BIZ_TZ, weekday: "short", hour: "2-digit", hour12: false }).formatToParts(new Date());
+      const wd = parts.find((p) => p.type === "weekday")?.value || "";
+      let hr = Number(parts.find((p) => p.type === "hour")?.value);
+      if (!Number.isFinite(hr)) return true;
+      if (hr === 24) hr = 0;
+      const weekday = ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(wd);
+      return weekday && hr >= BIZ_START && hr < BIZ_END;
+    } catch { return true; }
+  };
+
+  // Assign an unassigned crmLeads doc to the next active rep. "Next" = the active
+  // rep assigned least recently (fair rotation). Returns the rep, or null if nobody
+  // is signed in as active — in which case the lead waits in the admin Inbox.
+  // Normalized phone key (last 10 digits) — used to match Quo call/text webhooks
+  // to a crmLead regardless of formatting (+1, dashes, spaces, etc.).
+  const phoneKeyOf = (raw: any): string => String(raw ?? "").replace(/\D+/g, "").slice(-10);
+
+  const assignToNextActiveRep = async (db: any, leadDocRef: any): Promise<{ id: string; name: string | null } | null> => {
+    const ps = await db.collection("crmReps").where("active", "==", true).get();
+    if (ps.empty) return null;
+    const candidates = ps.docs.map((d: any) => ({
+      id: d.id,
+      name: d.get("name") || null,
+      last: d.get("lastAssignedAt") ? Date.parse(d.get("lastAssignedAt")) : 0,
+    }));
+    candidates.sort((a: any, b: any) => a.last - b.last); // least-recently-assigned first (fair rotation)
+    const pick = candidates[0];
+    const now = new Date().toISOString();
+    await leadDocRef.update({ owner: pick.id, ownerName: pick.name || null, assignedAt: now, updatedAt: now });
+    await db.collection("crmReps").doc(pick.id).update({ lastAssignedAt: now });
+    return { id: pick.id, name: pick.name };
+  };
+
+  // ---- Phase B: scheduled tick (Cloud Scheduler → here every few minutes) ----
+  // Guarded by CRM_TICK_SECRET (header x-tick-secret or ?secret=). Does two things:
+  //  1. FREE-TO-CALL: any lead that has sat in attempting_contact for >= FREE_TO_CALL_BDAYS
+  //     business days (Mon–Fri, Atlantic) is released back to the pool (owner=null,
+  //     stage=new_lead) with an activity note. Must match FREE_TO_CALL_BDAYS in CrmPanel.tsx.
+  //  2. DRIP: during business hours, unassigned Inbox leads are handed to active reps in
+  //     rotation (closes the gap where a rep goes active but nothing re-checks the pool).
+  const FREE_TO_CALL_BDAYS = 3;
+  // "Jane Doe <jane@x.com>" → "Jane Doe"; "jane@x.com" → "jane@x.com"
+  const nameOfHeader = (h: string): string => { const m = String(h || "").match(/^\s*"?([^"<]*?)"?\s*<[^>]+>\s*$/); return (m ? m[1].trim() : String(h || "").trim()); };
+
+  // Extract the plain-text body of a Gmail message and strip the noise a reply carries:
+  // quoted previous messages ("On Mon, X wrote:", "> lines"), signature blocks ("-- ",
+  // "Sent from my iPhone"), and long runs of blank lines. Keeps just what they typed.
+  const cleanEmailBody = (m: any): string => {
+    const b64 = (s: string) => Buffer.from(String(s || "").replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    const findPart = (p: any, mime: string): string | null => {
+      if (!p) return null;
+      if (p.mimeType === mime && p.body?.data) return b64(p.body.data);
+      for (const c of p.parts || []) { const r = findPart(c, mime); if (r) return r; }
+      return null;
+    };
+    let text = findPart(m.payload, "text/plain");
+    if (!text) {
+      const html = findPart(m.payload, "text/html");
+      if (html) text = html.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|tr|li|h\d)>/gi, "\n").replace(/<[^>]+>/g, "")
+        .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+    }
+    if (!text) text = String(m.snippet || "");
+    text = text.replace(/\r\n/g, "\n");
+    const lines = text.split("\n");
+    const out: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      const t = l.trim();
+      // Stop at quoted-reply markers / signature separators.
+      if (/^On .+ wrote:\s*$/i.test(t)) break;
+      if (/^On .+,\s*\d{4}.*$/i.test(t) && i + 1 < lines.length && /wrote:\s*$/i.test(lines[i + 1].trim())) break;
+      if (/^-{2,}\s*$/.test(t)) break;                              // "-- " sig separator
+      if (/^_{5,}|^-{5,}\s*$|^From:\s.+/i.test(t)) break;           // Outlook-style separators
+      if (/^(Sent from my|Get Outlook for|Envoyé de mon)/i.test(t)) break;
+      // WiseStamp / HTML-signature plain-text renderings: "[image: photo]", "[image: facebook] <https://…>", "* Mobile * 902…"
+      if (/^\[image:\s*[^\]]*\]/i.test(t) && (/facebook|instagram|youtube|linkedin|logo|photo|tpx/i.test(t) || /<https?:\/\//.test(t))) break;
+      if (/^\*\s*(Mobile|Phone|Website|Email|Address)\s*\*/i.test(t)) break;
+      if (/^[A-Z][a-z]+ [A-Z][a-z]+\s*$/.test(t) && i + 1 < lines.length && /(Founder|Manager|Consultant|Sales|Advisor|Specialist|Vehicle Approval Centre)/i.test(lines[i + 1])) break;
+      if (t.startsWith(">")) continue;                             // quoted lines
+      out.push(l);
+    }
+    let cleaned = out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+    // Photo-only / signature-only reply: if what's left is just a "Name\nTitle, Company…" block, show nothing.
+    if (/^[A-Z][a-z]+ [A-Z][a-z]+\s*\n\s*(Founder|Manager|Consultant|Sales|Advisor|Specialist)[^\n]*Vehicle Approval Centre/i.test(cleaned) || /^[A-Z][a-z]+ [A-Z][a-z]+\s+(Founder|Manager|Consultant|Sales|Advisor|Specialist)\b/i.test(cleaned)) cleaned = "";
+    // Signature heuristics: cut at a line that's the sender's own name/title if followed by contact-y lines.
+    const sigIdx = cleaned.search(/\n(?:[A-Z][a-z]+ [A-Z][a-z]+\s*\n(?:.*\n){0,2}.*(?:Mobile|Phone|Website|Founder|Manager|Sales|Email)\b)/);
+    if (sigIdx > 20) cleaned = cleaned.slice(0, sigIdx).trim();
+    if (!cleaned) {
+      const snip = String(m.snippet || "");
+      // If the snippet itself is just signature/image noise, return empty (attachment carries the message).
+      if (/^\s*(\[image:|Justin Jackson|[A-Z][a-z]+ [A-Z][a-z]+ (Founder|Manager|Consultant|Sales|Advisor))/i.test(snip)) return "";
+      return snip.slice(0, 300);
+    }
+    return cleaned;
+  };
+
+  // Pull any NEW customer replies from a lead's Gmail thread into its activityLog.
+  // Reads the thread AS the rep who started it. Idempotent (tracks seen message ids).
+  // Used by the 5-min tick (background) and by the drawer on open (instant).
+  // Heads-up SMS to a rep's own phone (their Quo/mobile number), sent from the shared VAC line.
+  // Used when a customer replies by email — reps reliably see texts, not always email.
+  const notifyRepBySms = async (db: any, repId: string, text: string): Promise<boolean> => {
+    try {
+      const apiKey = process.env.QUO_API_KEY; const from = process.env.QUO_FROM_NUMBER;
+      if (!apiKey || !from || !repId) return false;
+      const rep = await db.collection("crmReps").doc(repId).get();
+      if (!rep.exists || rep.get("poolAccount")) return false;
+      const to = String(rep.get("mobile") || rep.get("quoNumber") || "").replace(/\D+/g, "");
+      if (to.length < 10) return false;
+      const e164 = (n: string) => (n.length === 10 ? `+1${n}` : `+${n}`);
+      // Don't text the shared line to itself.
+      if (e164(to) === e164(String(from).replace(/\D+/g, ""))) return false;
+      const r = await fetchWithTimeout("https://api.openphone.com/v1/messages", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: apiKey },
+        body: JSON.stringify({ from: e164(String(from).replace(/\D+/g, "")), to: [e164(to)], content: text.slice(0, 1500) }),
+      });
+      return r.ok;
+    } catch (e: any) { console.error("[NOTIFY-REP] failed:", e?.message || e); return false; }
+  };
+
+  const importLeadEmails = async (db: any, admin: any, d: any, gmailCache?: Map<string, any>): Promise<{ imported: number; entries: any[] }> => {
+    const et: any = d.get("emailThread") || {};
+    if (!et.threadId || !et.repEmail) return { imported: 0, entries: [] };
+    const nowIso = new Date().toISOString();
+    let gm = gmailCache?.get(et.repEmail);
+    if (!gm) { gm = await gmailAs(et.repEmail); gmailCache?.set(et.repEmail, gm); }
+    const th = await gm.users.threads.get({ userId: "me", id: et.threadId, format: "full" });
+    const msgs: any[] = th.data.messages || [];
+    const seen: string[] = d.get("emailSeenIds") || [];
+    const log: any[] = d.get("activityLog") || [];
+    const known = new Set([...seen, ...log.map((a) => a && a.gmailId).filter(Boolean)]);
+    const leadEmail = String(d.get("email") || "").toLowerCase();
+    const newEntries: any[] = []; const newIds: string[] = [];
+    for (const m of msgs) {
+      if (!m.id || known.has(m.id)) continue;
+      const hdr = (n: string) => (m.payload?.headers || []).find((h: any) => String(h.name).toLowerCase() === n.toLowerCase())?.value || "";
+      const from = String(hdr("From")).toLowerCase();
+      const labels: string[] = m.labelIds || [];
+      // Only the CUSTOMER's messages — skip ours (SENT / from the rep) and drafts.
+      const isOurs = labels.includes("SENT") || from.includes(String(et.repEmail).toLowerCase());
+      if (isOurs || labels.includes("DRAFT")) { newIds.push(m.id); continue; }
+      const body = cleanEmailBody(m);
+      // Real attachments (skip inline signature icons: tiny images / no filename / content-id-only)
+      const atts: { id: string; filename: string; mimeType: string; size: number }[] = [];
+      const walk = (part: any) => {
+        if (!part) return;
+        const fn = part.filename || "";
+        const aid = part.body?.attachmentId;
+        const size = Number(part.body?.size || 0);
+        const cid = (part.headers || []).some((h: any) => String(h.name).toLowerCase() === "content-id");
+        const disp = String((part.headers || []).find((h: any) => String(h.name).toLowerCase() === "content-disposition")?.value || "");
+        const inlineSig = cid && (size < 40_000 || /^(image0|facebook|instagram|youtube|linkedin|logo|__tpx__)/i.test(fn)) && !/attachment/i.test(disp);
+        if (fn && aid && !inlineSig) atts.push({ id: aid, filename: fn, mimeType: part.mimeType || "application/octet-stream", size });
+        for (const c of part.parts || []) walk(c);
+      };
+      walk(m.payload);
+      const at = m.internalDate ? new Date(Number(m.internalDate)).toISOString() : nowIso;
+      const fromLabel = nameOfHeader(hdr("From")) || (leadEmail && from.includes(leadEmail) ? "Customer" : hdr("From")) || "Customer";
+      const subj = String(hdr("Subject") || et.subject || "(no subject)").replace(/^(re|fwd?):\s*/i, "");
+      const attNote = atts.length ? `\n📎 ${atts.map((a) => a.filename).join(", ")}` : "";
+      newEntries.push({ text: `📧 Email received — ${subj}\n${body.slice(0, 2000)}${attNote}`, by: fromLabel, at, kind: "email", direction: "inbound", from: hdr("From"), subject: hdr("Subject"), gmailId: m.id, gmailThreadId: et.threadId, mailbox: et.repEmail, attachments: atts });
+      newIds.push(m.id);
+    }
+    if (newEntries.length || newIds.length) {
+      const upd: any = { emailSeenIds: admin.firestore.FieldValue.arrayUnion(...newIds) };
+      if (newEntries.length) {
+        upd.activityLog = admin.firestore.FieldValue.arrayUnion(...newEntries);
+        upd.updatedAt = nowIso;
+        upd["emailThread.lastInboundAt"] = newEntries[newEntries.length - 1].at;
+      }
+      await d.ref.update(upd);
+      // Heads-up to the rep who owns this lead: customers replying by email is a hot signal.
+      if (newEntries.length && d.get("owner")) {
+        const leadName = [d.get("firstName"), d.get("lastName")].filter(Boolean).join(" ") || "A lead";
+        const last = newEntries[newEntries.length - 1];
+        const preview = String(last.text || "").split("\n").slice(1).join(" ").replace(/📎.*$/s, "").trim().slice(0, 140);
+        const link = `https://vehicleapprovalcentre.com/admin?tab=crm&lead=${d.id}`;
+        const msg = `📧 ${leadName} replied to your email${newEntries.length > 1 ? ` (${newEntries.length} new)` : ""}${preview ? `: “${preview}${preview.length >= 140 ? "…" : ""}”` : ""}\nOpen: ${link}`;
+        notifyRepBySms(db, d.get("owner"), msg).catch(() => {});
+      }
+    }
+    return { imported: newEntries.length, entries: newEntries };
+  };
+  const businessDaysBetween = (fromIso: string, now: Date): number => {
+    // Business days (Mon–Fri, Atlantic) elapsed AFTER the entry day, through today.
+    // Entered Mon: Mon=0, Tue=1, Wed=2, Thu=3 → released Thu (3 business days used up).
+    // Entered Fri: Fri=0, Mon=1, Tue=2, Wed=3 → weekend didn't count.
+    const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: BIZ_TZ, year: "numeric", month: "2-digit", day: "2-digit", weekday: "short" });
+    const info = (d: Date) => { const p = fmt.formatToParts(d); const g = (t: string) => p.find((x) => x.type === t)?.value || ""; return { key: `${g("year")}-${g("month")}-${g("day")}`, wd: g("weekday") }; };
+    const endKey = info(now).key;
+    let n = 0;
+    const cur = new Date(fromIso);
+    cur.setUTCDate(cur.getUTCDate() + 1); // start counting the day AFTER entry
+    for (let i = 0; i < 400; i++) {
+      const { key, wd } = info(cur);
+      if (key > endKey) break;
+      if (wd !== "Sat" && wd !== "Sun") n++;
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    return n;
+  };
+  app.all("/api/crm/tick", async (req, res) => {
+    try {
+      const secret = process.env.CRM_TICK_SECRET || "";
+      const given = String(req.get("x-tick-secret") || req.query.secret || "");
+      if (!secret || given !== secret) return res.status(403).json({ error: "Forbidden." });
+      const { admin, db } = await getFirestoreAdmin();
+      const now = new Date(); const nowIso = now.toISOString();
+      const out: any = { released: [], dripped: [], businessHours: isBusinessHours() };
+
+      // 1) Free-to-Call release
+      const ac = await db.collection("crmLeads").where("stage", "==", "attempting_contact").get();
+      for (const d of ac.docs) {
+        // FIRST time it ever entered Attempting Contact — bouncing out and back doesn't reset the clock.
+        const hist: any[] = d.get("stageHistory") || [];
+        const entered = d.get("attemptingSince") || hist.find((h) => h && h.to === "attempting_contact")?.at || d.get("updatedAt") || d.get("addTime");
+        if (!entered) continue;
+        const bd = businessDaysBetween(String(entered), now);
+        if (bd >= FREE_TO_CALL_BDAYS) {
+          const prevOwner = d.get("ownerName") || d.get("owner") || "unassigned";
+          // Tally what the rep actually did while they had it — shows in the note so
+          // the next rep (and the manager) can see effort vs. a lead that just sat.
+          const sinceMs = Date.parse(String(entered));
+          const log: any[] = d.get("activityLog") || [];
+          const mine = log.filter((a) => a && a.at && Date.parse(a.at) >= sinceMs && a.by !== "System" && !String(a.text || "").startsWith("♻️"));
+          const calls = mine.filter((a) => a.kind === "call" && a.direction !== "inbound").length;
+          const texts = mine.filter((a) => a.kind === "text" && a.direction !== "inbound").length;
+          const notes = mine.filter((a) => !a.kind || a.kind === "note").length;
+          const inbound = mine.filter((a) => a.direction === "inbound").length;
+          const effort = `${calls} call${calls === 1 ? "" : "s"}, ${texts} text${texts === 1 ? "" : "s"}, ${notes} note${notes === 1 ? "" : "s"}${inbound ? `, ${inbound} customer repl${inbound === 1 ? "y" : "ies"}` : ", no customer reply"}`;
+          await d.ref.update({
+            stage: "free_to_call", owner: null, ownerName: null, assignedAt: null, updatedAt: nowIso,
+            releasedAt: nowIso, releasedFrom: d.get("owner") || null, releasedFromName: d.get("ownerName") || null,
+            releaseStats: { calls, texts, notes, inbound, bdays: bd, from: d.get("owner") || null, fromName: prevOwner },
+            stageHistory: admin.firestore.FieldValue.arrayUnion({ from: "attempting_contact", to: "free_to_call", by: "system:free-to-call", byUid: null, at: nowIso }),
+            activityLog: admin.firestore.FieldValue.arrayUnion({ text: `♻️ Released to Free-to-Call pool after ${bd} business days in Attempting Contact (limit ${FREE_TO_CALL_BDAYS}). Was with ${prevOwner} — ${effort}.`, by: "System", at: nowIso, kind: "note" }),
+          });
+          out.released.push({ id: d.id, name: [d.get("firstName"), d.get("lastName")].filter(Boolean).join(" "), from: prevOwner, bdays: bd, effort });
+        }
+      }
+
+      // 1b) HOT-LEAD BOUNCE: a fresh lead (new_lead) assigned ≥30 min ago that its rep hasn't
+      //     touched yet (no outbound call/text/email/note from them since assignment) bounces to
+      //     the next active rep. Business hours only. Fresh leads are gold — don't let one sit.
+      out.bounced = [];
+      if (out.businessHours) {
+        try {
+          const HOT_MIN = 30;
+          const cutoff = new Date(Date.now() - HOT_MIN * 60_000).toISOString();
+          const fresh = await db.collection("crmLeads").where("stage", "==", "new_lead").get();
+          const repsAll = await db.collection("crmReps").get();
+          const repById = new Map<string, any>(repsAll.docs.map((d: any) => [d.id, d]));
+          const activeCount = repsAll.docs.filter((d: any) => d.get("active") === true && d.get("archived") !== true && !d.get("poolAccount")).length;
+          for (const d of fresh.docs) {
+            const owner = d.get("owner"); const assignedAt = d.get("assignedAt");
+            if (!owner || !assignedAt || assignedAt > cutoff) continue;           // unassigned, or not yet 30 min
+            if (d.get("bouncedAt") && d.get("bouncedAt") > assignedAt) continue;  // already bounced since this assignment
+            if (activeCount < 2) continue;                                        // nobody else to bounce to
+            const rep = repById.get(owner);
+            if (rep?.get("poolAccount")) continue;                                // shared/pool accounts (Leads VAC) aren't a rep sitting on a lead
+            const repUid = rep?.get("uid"); const repEmail = String(rep?.get("email") || "").toLowerCase();
+            const log: any[] = d.get("activityLog") || [];
+            const touched = log.some((a) => a && a.at && a.at >= assignedAt && a.direction !== "inbound" && a.by !== "System" &&
+              ((a.byRepId && a.byRepId === owner) || (repUid && a.byUid === repUid) || (repEmail && String(a.by || "").toLowerCase() === repEmail)));
+            if (touched) continue;
+            // Pick the next active rep that isn't the current owner.
+            const candidates = repsAll.docs.filter((r: any) => r.get("active") === true && r.get("archived") !== true && r.id !== owner && !r.get("poolAccount"))
+              .map((r: any) => ({ id: r.id, name: r.get("name") || null, last: r.get("lastAssignedAt") ? Date.parse(r.get("lastAssignedAt")) : 0 }))
+              .sort((a: any, b: any) => a.last - b.last);
+            const next = candidates[0]; if (!next) continue;
+            const prevName = d.get("ownerName") || owner;
+            await d.ref.update({
+              owner: next.id, ownerName: next.name, assignedAt: nowIso, updatedAt: nowIso,
+              bouncedAt: nowIso, bouncedFrom: owner, bouncedFromName: prevName, bounceCount: admin.firestore.FieldValue.increment(1),
+              activityLog: admin.firestore.FieldValue.arrayUnion({ text: `⚡ Hot-lead bounce — sat ${HOT_MIN} min with ${prevName} and wasn't touched. Reassigned to ${next.name || next.id}.`, by: "System", at: nowIso, kind: "note", bounce: true, bouncedFrom: owner }),
+            });
+            await db.collection("crmReps").doc(next.id).update({ lastAssignedAt: nowIso });
+            out.bounced.push({ id: d.id, name: [d.get("firstName"), d.get("lastName")].filter(Boolean).join(" "), from: prevName, to: next.name || next.id });
+          }
+        } catch (e: any) { console.error("[CRM-TICK] hot-lead bounce failed:", e?.message || e); }
+      }
+
+      // 2) Drip waiting Inbox leads to active reps (business hours only)
+      if (out.businessHours) {
+        const pool = await db.collection("crmLeads").where("owner", "==", null).get();
+        const waiting = pool.docs
+          .filter((d: any) => (d.get("stage") || "new_lead") === "new_lead")
+          .sort((a: any, b: any) => String(a.get("addTime") || "").localeCompare(String(b.get("addTime") || "")));
+        for (const d of waiting) {
+          const rep = await assignToNextActiveRep(db, d.ref);
+          if (!rep) break; // nobody active — leave the rest in the Inbox
+          out.dripped.push({ id: d.id, to: rep.name || rep.id });
+        }
+      }
+
+      // 2b) Nurture wake-ups: Lost leads whose wake-up date has arrived → Free-to-Call pool with a note.
+      out.woken = [];
+      try {
+        const due = await db.collection("crmLeads").where("nurtureStatus", "==", "sleeping").get();
+        for (const d of due.docs) {
+          const at = d.get("nurtureAt"); if (!at || String(at) > nowIso) continue;
+          const reason = d.get("lostReason") || "Lost"; const lostAt = d.get("lostAt") || d.get("updatedAt");
+          const ago = lostAt ? Math.round((Date.now() - Date.parse(lostAt)) / 86_400_000) : null;
+          const agoTxt = ago == null ? "" : ago >= 60 ? ` ${Math.round(ago / 30)} months ago` : ago === 0 ? " today" : ago === 1 ? " 1 day ago" : ` ${ago} days ago`;
+          const wasWith = d.get("lostByName") || d.get("lostBy") || "";
+          await d.ref.update({
+            stage: "free_to_call", owner: null, ownerName: null, assignedAt: null, updatedAt: nowIso,
+            nurtureStatus: "woken", wokenAt: nowIso, releasedAt: nowIso,
+            releasedFrom: null, releasedFromName: wasWith ? `${wasWith} (lost: ${reason})` : null,   // no reclaim block for nurtures — anyone incl. the original rep may take it
+            poolNote: `⏰ Nurture wake-up — was Lost (${reason})${agoTxt}${wasWith ? `, by ${wasWith}` : ""}.${d.get("lostNote") ? ` “${String(d.get("lostNote")).slice(0, 160)}”` : ""} Worth another try.`,
+            stageHistory: admin.firestore.FieldValue.arrayUnion({ from: "lost", to: "free_to_call", by: "system:nurture", byUid: null, at: nowIso }),
+            activityLog: admin.firestore.FieldValue.arrayUnion({ text: `⏰ Woke up from Nurture — was Lost (${reason})${agoTxt}. Back in the Free-to-Call pool.`, by: "System", at: nowIso, kind: "note" }),
+          });
+          out.woken.push({ id: d.id, name: [d.get("firstName"), d.get("lastName")].filter(Boolean).join(" "), reason });
+        }
+      } catch (e: any) { console.error("[CRM-TICK] nurture phase failed:", e?.message || e); }
+
+      // 3) Inbound email replies → thread (background sweep; the drawer also refreshes on open).
+      out.emailsImported = [];
+      try {
+        const allLeads = await db.collection("crmLeads").get();
+        const gmailCache = new Map<string, any>();
+        for (const d of allLeads.docs.filter((x: any) => x.get("emailThread")?.threadId)) {
+          try {
+            const r = await importLeadEmails(db, admin, d, gmailCache);
+            if (r.imported > 0) out.emailsImported.push({ id: d.id, count: r.imported });
+          } catch (e: any) { console.error("[CRM-TICK] email import failed for", d.id, e?.message || e); }
+        }
+      } catch (e: any) { console.error("[CRM-TICK] email import phase failed:", e?.message || e); }
+
+      res.json({ ok: true, at: nowIso, ...out });
+    } catch (err: any) {
+      console.error("[CRM-TICK] error:", err?.message || err);
+      res.status(500).json({ error: "Tick failed." });
+    }
+  });
+
+  app.post("/api/apply-now", async (req: express.Request, res: express.Response) => {
+    const ip = clientIp(req);
+    if (!rateLimit(`apply-now:${ip}`, 5, 60_000)) {
+      return res.status(429).json({ error: "Too many requests. Please try again shortly." });
+    }
+    const body = req.body || {};
+    const a = body.applicant || {};
+    const addr = a.address || {};
+    const v = body.vehicle || {}, e = body.employment || {}, h = body.housing || {}, el = body.eligibility || {}, mk = body.marketing || {};
+    const email = (a.email || "").toString().trim().toLowerCase();
+    const phone = (a.phone || "").toString().trim();
+    const phoneDigits = normPhone(phone);
+
+    if (!email && !phoneDigits) return res.status(400).json({ error: "Missing contact information." });
+    if (email && !isValidEmail(email)) return res.status(400).json({ error: "Please enter a valid email address." });
+    if (body?.consent?.agreed !== true) return res.status(400).json({ error: "Consent is required to submit." });
+
+    const apiToken = process.env.PIPEDRIVE_API_TOKEN;
+    if (!apiToken) return res.status(500).json({ error: "PIPEDRIVE_API_TOKEN is not configured." });
+
+    const nowIso = new Date().toISOString();
+    const name = [a.firstName, a.lastName].filter(Boolean).join(" ") || "Applicant";
+    // DOB is captured DD/MM/YYYY on this form; Pipedrive date fields want YYYY-MM-DD.
+    // (Do NOT use normalizeDate here — it assumes MM/DD and would flip the day/month.)
+    const dobToISO = (s: any): string | undefined => {
+      if (typeof s !== "string") return undefined;
+      const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (!m) return undefined;
+      if (+m[2] < 1 || +m[2] > 12 || +m[1] < 1 || +m[1] > 31) return undefined;
+      return `${m[3]}-${m[2]}-${m[1]}`;
+    };
+    const esc = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const timeStr = (t: any) => (t && (t.years || t.months) ? `${t.years || 0}y ${t.months || 0}m` : "");
+
+    try {
+      // 1) Person (dedupe by email/phone)
+      let personId = await findPipedrivePerson(apiToken, email, phone);
+      const personDobKey = process.env.PIPEDRIVE_PERSON_DOB_FIELD_KEY;
+      const dobIso = dobToISO(a.dob);
+      const personPayload: any = { name, email: email ? [email] : undefined, phone: phone ? [phone] : undefined };
+      if (dobIso && personDobKey) personPayload[personDobKey] = dobIso;
+      if (!personId) {
+        const r = await fetchWithTimeout(`https://api.pipedrive.com/v1/persons?api_token=${apiToken}`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(personPayload),
+        });
+        personId = (await r.json())?.data?.id;
+      } else {
+        await fetchWithTimeout(`https://api.pipedrive.com/v1/persons/${personId}?api_token=${apiToken}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(personPayload),
+        });
+      }
+
+      // 2) LEAD (never a deal). Reuse an open lead if this person already has one.
+      const existing = personId ? await findRecentOpenPipedriveLead(apiToken, personId) : null;
+      let leadId = existing ? existing.id : null;
+      if (!leadId) {
+        const leadPayload: any = { title: name, person_id: personId };
+        // Pipedrive custom-field keys (confirmed from GET /v1/dealFields — leads share
+        // deal fields). Everything the funnel captures lands in its OWN filterable field;
+        // the note (below) stays as the human-readable summary + catch-all.
+        const set = (key: string, val: any) => {
+          if (val !== undefined && val !== null && String(val).trim() !== "") leadPayload[key] = val;
+        };
+        // Contact
+        set("daee3baeeba75f1262c5a59c2d5fae9e0ab9824b", a.firstName);         // First Name
+        set("45db65ef76c70f04bd5c6a161e4d48b3e3fb52b8", a.lastName);          // Last Name
+        set("9902ecfb207e316c980c1264d302e7e48a86bf4a", phone);              // Phone Number
+        set("9649ec95be44509028395a4b4cedd772d133534c", email);             // Email
+        set("1607078230a6742a6afc8f68968b09f7de12d1bb", dobIso || a.dob);    // DOB
+        // Address
+        set("7654290790c763a2afe25568df76093670091d83", addr.street);        // Street Address
+        set("9cf433c83609faf834036edec7e675fd5676e694", addr.suite);         // Apartment/Suite
+        set("8ace800abf264d012c73a8eef1d6d5cf9f0c160c", addr.city);          // City
+        set("bedcc069f503187bd05b3a221cf5f1509d37f36b", addr.province);      // Province
+        set("eaad668062db5c899096f99eba83a34e672a8503", addr.postal);        // Postal Code
+        // Vehicle
+        set("6150c2ed44b168d6dba7472be2aa2366e7d6fc42", v.type);             // Looking For
+        set("34dbe5967fd0d9b18db6b026468a27618f0ff888", v.budgetBand);       // Budget
+        set("125897eb1ad0cf18f0f1bdb03064058e9528fca0", v.downPayment);      // Down Payment
+        set("f8683d67228e1316880a7a15e719b80f68d58f49", v.tradeIn);          // Has Trade-In (Yes/No/Unsure)
+        // Employment & income
+        set("f33681a3d38a9526fecd9704aae5d20abc7ab76f", e.status);           // Employment Status
+        set("a1bf2e94dd027089a4091f45b71fb1f18d79e5d6", e.employer);         // Employer
+        set("5ad151377579cf87e71e4565d3bc7dfc2e62b153", e.jobTitle);         // Job Title
+        set("b327c0938c9ab66eaee6806a22ff5716252d2cc7", e.hoursPerWeek);     // How many hours a week
+        set("d9e541eadb637ab076a189134019c1c96c26e8f9", timeStr(e.timeOnJob)); // Time on Job
+        // Gross income routes to the matching field by type (hourly vs monthly)
+        if (/hour/i.test(String(e.incomeType || ""))) {
+          set("6df9a9fd090d038e8eb836fce00c2a89f3187289", e.grossIncome);    // Hourly Wage
+        } else {
+          set("7850c2c90305c2d65ce8c81dc07f92bcfecddae0", e.grossIncome);    // Monthly Income
+        }
+        // Housing
+        set("366f5d279222b4c36bd1b3a4cccd4d2d67b77833", h.ownOrRent);         // Rent or Own
+        set("5530e4ac6b144e965c80fc49a18237591ee0b2a3", h.monthlyPayment);   // Monthly Payment
+        set("1d73b415c786bb6e1feefd137f3362d7df057fda", timeStr(h.timeAtAddress)); // How long lived there
+        // Eligibility — Valid Drivers License is an enum (Yes=201, No=202)
+        const lic = String(el.validLicense || "").toLowerCase();
+        if (lic === "yes") set("f72c950606278711225de1c6d279e3bae6e14331", 201);
+        else if (lic === "no") set("f72c950606278711225de1c6d279e3bae6e14331", 202);
+        // Credit + Citizen/PR (dedicated fields created 2026-08-17)
+        set("f805e9aac832acb583d7e9f293711e48222bc402", (body.credit || {}).selfRating); // Credit Self-Rating
+        set("6ae2b9103295bf3b6b8fc1218762fc231edb8499", el.citizenOrPR);                  // Citizen or PR
+        // Lead Source (derived from UTMs)
+        set("a7c81ae79890d65ac301296c947f335e91730146", getLeadSource(mk.utm_source, mk.utm_medium));
+        const r = await fetchWithTimeout(`https://api.pipedrive.com/v1/leads?api_token=${apiToken}`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(leadPayload),
+        });
+        leadId = (await r.json())?.data?.id;
+      }
+
+      // 3) Full application as a note — guarantees nothing is lost even if a custom field is unset.
+      const line = (label: string, val: any) => (val === undefined || val === null || val === "" ? "" : `${label}: ${esc(val)}<br>`);
+      const note =
+        `<b>NEW PRE-APPROVAL APPLICATION</b> (${esc(nowIso)})<br><br>` +
+        `<b>Contact</b><br>` +
+        line("Name", name) + line("Phone", phone) + line("Email", email) + line("Date of birth", a.dob) +
+        line("Address", [addr.street, addr.suite, addr.city, addr.province, addr.postal].filter(Boolean).join(", ")) +
+        `<br><b>Vehicle</b><br>` +
+        line("Vehicle of interest", v.specificVehicle) + line("Stock #", v.specificVehicleId) +
+        line("Looking for", v.type) + line("Budget", v.budgetBand) + line("Trade-in", v.tradeIn) + line("Down payment", v.downPayment) +
+        `<br><b>Credit</b><br>` + line("Self-rating", (body.credit || {}).selfRating) +
+        `<br><b>Employment &amp; income</b><br>` +
+        line("Status", e.status) + line("Employer", e.employer) + line("Job title", e.jobTitle) +
+        line("Income type", e.incomeType) + line("Gross income", e.grossIncome) + line("Hours/week", e.hoursPerWeek) +
+        line("Time on job", timeStr(e.timeOnJob)) + line("Income source", e.incomeSource) +
+        `<br><b>Housing</b><br>` +
+        line("Own/Rent", h.ownOrRent) + line("Monthly payment", h.monthlyPayment) + line("Time at address", timeStr(h.timeAtAddress)) +
+        `<br><b>Eligibility</b><br>` +
+        line("Citizen/PR", el.citizenOrPR) + line("Valid licence", el.validLicense) +
+        `<br><b>Marketing</b><br>` +
+        line("Source", mk.utm_source) + line("Medium", mk.utm_medium) + line("Campaign", mk.utm_campaign) +
+        line("Content", mk.utm_content) + line("Term", mk.utm_term) + line("gclid", mk.gclid) + line("fbclid", mk.fbclid);
+      if (leadId) {
+        await fetchWithTimeout(`https://api.pipedrive.com/v1/notes?api_token=${apiToken}`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: note, lead_id: leadId }),
+        });
+      }
+
+      // 4) Best-effort Firestore copy (own record; NO `stage`, so it never shows as a board deal).
+      try {
+        const { db } = await getFirestoreAdmin();
+        await db.collection("leads").add({
+          source: "apply-now", type: "financing", status: "new",
+          firstName: a.firstName || null, lastName: a.lastName || null,
+          email: email || null, phone: phone || null, dob: a.dob || null, dateOfBirth: a.dob || null,
+          fullAddress: [addr.street, addr.suite, addr.city, addr.province, addr.postal].filter(Boolean).join(", ") || null,
+          city: addr.city || null, province: addr.province || null, postalCode: addr.postal || null,
+          vehicleType: v.type || null, annualIncome: e.grossIncome || null, monthlyHousing: h.monthlyPayment || null,
+          creditSelfRating: (body.credit || {}).selfRating || null,
+          application: body, marketing: mk,
+          pipedriveLeadId: leadId || null, pipedrivePersonId: personId || null,
+          createdAt: new Date(), submittedAt: nowIso,
+        });
+      } catch (fireErr: any) {
+        console.error("[APPLY-NOW] Firestore persist failed (non-fatal):", fireErr?.message || fireErr);
+      }
+
+      // 4b) Dual-write into the in-house CRM (`crmLeads`) so the lead lands in the
+      // admin Inbox (owner=null → unassigned) ready to disperse. Keyed by the
+      // Pipedrive lead id to stay idempotent with the importer, and never resets
+      // the stage/owner of a lead that's already been picked up and worked.
+      try {
+        const { admin, db } = await getFirestoreAdmin();
+        const incomeHourly = /hour/i.test(String(e.incomeType || ""));
+        const crmRecord: any = {
+          pipedriveLeadId: leadId ? String(leadId) : null,
+          pipedrivePersonId: personId || null,
+          title: name,
+          firstName: a.firstName || null, lastName: a.lastName || null,
+          dob: a.dob || null, phone: phone || null, phoneKey: phoneKeyOf(phone) || null, email: email || null,
+          street: addr.street || null, suite: addr.suite || null, city: addr.city || null,
+          province: addr.province || null, postal: addr.postal || null,
+          lookingFor: v.type || null, budget: v.budgetBand || null, downPayment: v.downPayment || null,
+          hasTradeIn: v.tradeIn || null, specificVehicle: v.specificVehicle || null, specificVehicleId: v.specificVehicleId || null,
+          employmentStatus: e.status || null, employer: e.employer || null, jobTitle: e.jobTitle || null,
+          hoursPerWeek: e.hoursPerWeek || null, timeOnJob: timeStr(e.timeOnJob) || null,
+          hourlyWage: incomeHourly ? (e.grossIncome || null) : null,
+          monthlyIncome: incomeHourly ? null : (e.grossIncome || null),
+          rentOrOwn: h.ownOrRent || null, monthlyPayment: h.monthlyPayment || null, timeAtAddress: timeStr(h.timeAtAddress) || null,
+          creditSelfRating: (body.credit || {}).selfRating || null, validLicense: el.validLicense || null, citizenOrPR: el.citizenOrPR || null,
+          leadSource: getLeadSource(mk.utm_source, mk.utm_medium) || null,
+          notes: admin.firestore.FieldValue.arrayUnion({ content: note, addTime: nowIso, byName: "Website" }),
+          addTime: nowIso,
+          source: "apply-now",
+          updatedAt: nowIso,
+        };
+        const docRef = leadId ? db.collection("crmLeads").doc(String(leadId)) : db.collection("crmLeads").doc();
+        const existingCrm = await docRef.get();
+        if (!existingCrm.exists) { crmRecord.stage = "new_lead"; crmRecord.owner = null; }
+        else if (!existingCrm.get("owner")) { crmRecord.owner = null; } // still unassigned → keep it that way
+        // (if it already has an owner, we leave stage/owner untouched)
+        await docRef.set(crmRecord, { merge: true });
+        // Phase A: auto-assign to the next active rep the instant it lands. If nobody
+        // is active, it stays unassigned and waits in the Inbox.
+        const wasUnassigned = !existingCrm.exists || !existingCrm.get("owner");
+        if (wasUnassigned && isBusinessHours()) {
+          try { await assignToNextActiveRep(db, docRef); }
+          catch (asnErr: any) { console.error("[APPLY-NOW] auto-assign failed (non-fatal):", asnErr?.message || asnErr); }
+        }
+      } catch (crmErr: any) {
+        console.error("[APPLY-NOW] CRM dual-write failed (non-fatal):", crmErr?.message || crmErr);
+      }
+
+      res.json({ success: true, leadId: leadId || null });
+    } catch (err: any) {
+      console.error("[APPLY-NOW] error:", err?.message || err);
+      res.status(500).json({ error: "Something went wrong. Please try again." });
+    }
+  });
+
+  app.post("/api/dv-lead", async (req, res) => {
+    const ip = clientIp(req);
+    if (!rateLimit(`dv-lead:${ip}`, 5, 60_000)) {
+      return res.status(429).json({ error: "Too many requests. Please try again shortly." });
+    }
+
+    const body = req.body || {};
+    const email = (body?.applicant?.email || "").toString().trim().toLowerCase();
+    const phoneDigits = normPhone(body?.applicant?.phone);
+
+    // A sellable lead needs a valid way to reach the applicant + explicit consent.
+    if (!email && !phoneDigits) {
+      return res.status(400).json({ error: "Missing contact information." });
+    }
+    if (email && !isValidEmail(email)) {
+      return res.status(400).json({ error: "Please enter a valid email address." });
+    }
+    if (phoneDigits && phoneDigits.length < 10) {
+      return res.status(400).json({ error: "Please enter a valid phone number." });
+    }
+    if (body?.consent?.shareWithDealers !== true || body?.consent?.agreed !== true) {
+      return res.status(400).json({ error: "Consent is required to submit." });
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+
+    // Proof-of-consent, stamped server-side so the client can't forge it. We keep
+    // the exact wording (body.consent.text) the applicant actually saw, plus IP,
+    // timestamp, version, and the captured UTMs (in `marketing`).
+    const consent = {
+      ...(body.consent || {}),
+      shareWithDealers: true,
+      creditPull: body?.consent?.creditPull === true,
+      agreed: true,
+      textVersion: body?.consent?.textVersion || DV_CONSENT_VERSION,
+      text: body?.consent?.text || null,
+      timestamp: nowIso,
+      ip,
+    };
+
+    const record: any = {
+      source: "apply.vehicleapprovalcentre.com",
+      submittedAt: nowIso,
+      submittedAtMs: now.getTime(),
+      emailLower: email || null,
+      phoneDigits: phoneDigits || null,
+      applicant: body.applicant || null,
+      vehicle: body.vehicle || null,
+      credit: body.credit || null,
+      employment: body.employment || null,
+      housing: body.housing || null,
+      eligibility: body.eligibility || null,
+      consent,
+      marketing: body.marketing || {}, // utm_*, gclid, fbclid, landing_page, ...
+      meta: { ip, userAgent: req.get("user-agent") || null },
+      status: "new",
+    };
+
+    // --- Assign dealer (round-robin) + order gate + persist + dedupe (best-effort) ---
+    let db: any = null;
+    let dealer: Dealer | null = null;
+    let leadRef: any = null;
+    let isDuplicate = false;
+    let held = false;          // true → save the lead but DON'T email the dealer yet
+    let activeOrder: any = null;
+    try {
+      ({ db } = await getFirestoreAdmin());
+
+      // Exclusive assignment: pick the one dealer who will buy this lead.
+      dealer = await assignDealer(db);
+      record.assignment = dealer
+        ? { dealerId: dealer.id, dealerName: dealer.name, dealerEmail: dealer.email, assignedAt: nowIso, delivery: "pending" }
+        : { dealerId: null, delivery: "unassigned" };
+
+      // Order gate. A dealer sells in batches ("orders") of a set size. We only
+      // email while the active order has room. No active order but past orders
+      // exist = paused between orders → hold. No orders at all = legacy send-all.
+      if (dealer) {
+        try {
+          const ordersSnap = await db.collection("dvOrders").where("dealerId", "==", dealer.id).get();
+          if (!ordersSnap.empty) {
+            const activeDoc = ordersSnap.docs.find((d: any) => d.data().status === "active");
+            if (!activeDoc) {
+              held = true; // between orders — paused until a new one is started
+            } else {
+              activeOrder = { id: activeDoc.id, ...activeDoc.data() };
+              // Fulfilled = delivered, non-returned leads already in this order.
+              const inOrder = await db.collection("dvLeads").where("assignment.orderId", "==", activeOrder.id).get();
+              let fulfilled = 0;
+              inOrder.forEach((d: any) => {
+                const x = d.data();
+                if (x.assignment?.delivery === "emailed" && !["returned", "bad"].includes(x.outcome || "new")) fulfilled++;
+              });
+              if (fulfilled >= (activeOrder.size || 150)) held = true;
+            }
+          }
+        } catch (e: any) {
+          console.error("[DV-LEAD] Order gate check failed (defaulting to send):", e?.message || e);
+        }
+      }
+
+      // Reflect the order gate on the record before persisting.
+      if (dealer) {
+        if (held) {
+          record.assignment.delivery = "held";
+        } else if (activeOrder) {
+          record.assignment.orderId = activeOrder.id;
+          record.assignment.orderNumber = activeOrder.number;
+        }
+      }
+
+      const windowStartMs = now.getTime() - DV_DEDUPE_WINDOW_MINUTES * 60_000;
+      // Equality-only queries need no composite index. Check email + phone.
+      const seen: number[] = [];
+      const collect = async (field: string, value: string | null) => {
+        if (!value) return;
+        const snap = await db.collection("dvLeads").where(field, "==", value).get();
+        snap.forEach((d: any) => {
+          const ms = d.get("submittedAtMs");
+          if (typeof ms === "number") seen.push(ms);
+        });
+      };
+      await collect("emailLower", email || null);
+      await collect("phoneDigits", phoneDigits || null);
+      isDuplicate = seen.some((ms) => ms >= windowStartMs);
+      record.status = isDuplicate ? "duplicate" : "new";
+      leadRef = await db.collection("dvLeads").add(record);
+    } catch (err: any) {
+      console.error("[DV-LEAD] Firestore persist/dedupe failed (continuing):", err?.message || err);
+    }
+
+    // Resilience: if Firestore was unavailable we couldn't round-robin — still
+    // assign the first active dealer so the lead is emailed and never lost.
+    if (!dealer) {
+      dealer = DEALERS.find((d) => d.active) || null;
+      if (dealer) {
+        record.assignment = { dealerId: dealer.id, dealerName: dealer.name, dealerEmail: dealer.email, assignedAt: nowIso, delivery: "pending" };
+      }
+    }
+
+    // A duplicate within the window is stored for the record but NOT re-sold to
+    // buyers — the applicant still sees success so they aren't bounced.
+    if (isDuplicate) {
+      console.log("[DV-LEAD] Duplicate within window — stored, not re-forwarded:", email || phoneDigits);
+      return res.json({ success: true, duplicate: true });
+    }
+
+    // --- Deliver the lead to its assigned dealer (EXCLUSIVE) by email ---
+    // The lead is already saved, so any delivery failure is logged for recovery
+    // and never bounces the applicant (they still see the success screen).
+    let delivered = false;
+    if (dealer && !held) {
+      try {
+        const resend = getResendClient();
+        const applicantName = [record.applicant?.firstName, record.applicant?.lastName].filter(Boolean).join(" ") || "New applicant";
+        const { error: mailErr } = await resend.emails.send({
+          from: LEAD_FROM_EMAIL,
+          to: dealer.email,
+          subject: `New lead — ${applicantName} · ${record.vehicle?.type || "vehicle"} · ${record.applicant?.address?.city || record.applicant?.address?.province || "Canada"}`,
+          html: renderLeadEmail(record),
+        });
+        if (mailErr) console.error("[DV-LEAD] Resend error emailing dealer:", mailErr);
+        else { delivered = true; console.log("[DV-LEAD] Lead emailed to dealer", dealer.email); }
+      } catch (err: any) {
+        console.error("[DV-LEAD] Failed to email lead to dealer (lead is saved):", err?.message || err);
+      }
+    } else if (dealer && held) {
+      console.log("[DV-LEAD] Order full/paused — lead HELD (saved, not emailed) for dealer", dealer.email);
+    } else {
+      console.error("[DV-LEAD] No active dealer configured — lead saved but NOT delivered:", email || phoneDigits);
+    }
+
+    // Record the delivery outcome (skip when held — it stays 'held' until an
+    // order is started and releases it).
+    if (leadRef && !held) {
+      try {
+        await leadRef.update({
+          "assignment.delivery": delivered ? "emailed" : "failed",
+          "assignment.deliveredAt": delivered ? new Date().toISOString() : null,
+        });
+      } catch (err: any) {
+        console.error("[DV-LEAD] Could not update delivery status:", err?.message || err);
+      }
+    }
+
+    // Optional: also fan out to any configured buyer webhooks (e.g. a future n8n
+    // distribution engine). Off unless BUYER_WEBHOOK_URL(S)/N8N_LEAD_WEBHOOK_URL set.
+    await Promise.all(buyerWebhooks().map(async (url) => {
+      try {
+        const response = await fetchWithTimeout(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(record),
+        }, 15000);
+        if (!response.ok) console.error("[DV-LEAD] Buyer webhook returned", response.status, "for", url);
+      } catch (err: any) {
+        console.error("[DV-LEAD] Failed to forward lead to", url, ":", err?.message || err);
+      }
+    }));
+
+    return res.json({ success: true });
+  });
+
+  // --- Admin auth helper: verify the caller's Firebase ID token is an admin ---
+  const requireAdmin = async (
+    req: express.Request,
+  ): Promise<{ db: any; admin: any; email: string } | { error: number; message: string }> => {
+    const authz = req.get("authorization") || "";
+    const token = authz.startsWith("Bearer ") ? authz.slice(7).trim() : "";
+    if (!token) return { error: 401, message: "Not signed in." };
+    const { admin, db } = await getFirestoreAdmin();
+    let decoded: any;
+    try {
+      decoded = await admin.auth().verifyIdToken(token);
+    } catch {
+      return { error: 401, message: "Session expired — please sign in again." };
+    }
+    // Mirror the Firestore isAdmin() rule: the owner email, or an admin role.
+    const email = (decoded.email || "").toLowerCase();
+    if (!email.endsWith("@drivevac.ca")) return { error: 403, message: "Only @drivevac.ca accounts can access the VAC admin." };
+    let ok = email === "j.jackson@drivevac.ca";
+    if (!ok && decoded.uid) {
+      const u = await db.collection("users").doc(decoded.uid).get();
+      const role = u.exists ? u.get("role") : null;
+      ok = ["super_admin", "general_manager", "finance_manager"].includes(role);
+    }
+    if (!ok) return { error: 403, message: "Admin access required." };
+    return { db, admin, email };
+  };
+
+  // Outcomes an admin can set on a delivered lead. "returned" and "bad" don't
+  // count toward a dealer's fulfilled/cap tally (they're credited back).
+  const DV_OUTCOMES = ["new", "accepted", "sold", "returned", "bad"];
+
+  // --- Admin: full lead list for the dashboard (auth-gated, admins only) ---
+  // Returns the FULL record per lead (so the detail view can show the whole
+  // application) plus the dealer roster with caps for the fulfilled tally.
+  app.get("/api/dv-leads", async (req, res) => {
+    try {
+      const ctx = await requireAdmin(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const snap = await ctx.db.collection("dvLeads").orderBy("submittedAtMs", "desc").limit(2000).get();
+      const leads = snap.docs.map((d: any) => ({ id: d.id, ...(d.data() || {}) }));
+      let dealerOverrides: Record<string, boolean> = {};
+      try { const s = await ctx.db.collection("dvRouting").doc("dealerStatus").get(); if (s.exists) dealerOverrides = s.data() || {}; } catch {}
+      const dealers = DEALERS.map((dl) => ({ id: dl.id, name: dl.name, cap: dl.monthlyCap || null, active: typeof dealerOverrides[dl.id] === "boolean" ? dealerOverrides[dl.id] : dl.active }));
+      const ordersSnap = await ctx.db.collection("dvOrders").get();
+      const orders = ordersSnap.docs.map((d: any) => ({ id: d.id, ...(d.data() || {}) }));
+      res.json({ leads, dealers, outcomes: DV_OUTCOMES, orders });
+    } catch (err: any) {
+      console.error("[DV-LEADS] list error:", err?.message || err);
+      res.status(500).json({ error: "Failed to load leads." });
+    }
+  });
+
+  // --- Admin: set a lead's outcome (new/accepted/sold/returned/bad) ---
+  app.post("/api/dv-lead-outcome", async (req, res) => {
+    try {
+      const ctx = await requireAdmin(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { id, outcome } = req.body || {};
+      if (!id || typeof id !== "string") return res.status(400).json({ error: "Missing lead id." });
+      if (!DV_OUTCOMES.includes(outcome)) return res.status(400).json({ error: "Invalid outcome." });
+      await ctx.db.collection("dvLeads").doc(id).update({
+        outcome,
+        outcomeAt: new Date().toISOString(),
+        outcomeBy: ctx.email,
+      });
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("[DV-LEAD-OUTCOME] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to update outcome." });
+    }
+  });
+
+  // --- Admin: toggle a funnel dealer on/off in the lead rotation ---
+  app.post("/api/dv-dealer-toggle", async (req, res) => {
+    try {
+      const ctx = await requireAdmin(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { dealerId, active } = req.body || {};
+      if (!DEALERS.some((d) => d.id === dealerId)) return res.status(400).json({ error: "Unknown dealer." });
+      if (typeof active !== "boolean") return res.status(400).json({ error: "'active' must be true/false." });
+      await ctx.db.collection("dvRouting").doc("dealerStatus").set({ [dealerId]: active }, { merge: true });
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("[DV-DEALER-TOGGLE] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to update dealer." });
+    }
+  });
+
+  // --- Admin: reassign a lead to a different dealer (re-emails the new dealer) ---
+  app.post("/api/dv-lead-reassign", async (req, res) => {
+    try {
+      const ctx = await requireAdmin(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { id, dealerId } = req.body || {};
+      if (!id || typeof id !== "string") return res.status(400).json({ error: "Missing lead id." });
+      const dealer = DEALERS.find((d) => d.id === dealerId);
+      if (!dealer) return res.status(400).json({ error: "Unknown dealer." });
+      const ref = ctx.db.collection("dvLeads").doc(id);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: "Lead not found." });
+      const lead: any = snap.data() || {};
+      const prev = lead.assignment || {};
+      if (prev.dealerId === dealer.id) return res.status(400).json({ error: "Lead is already with that dealer." });
+      const nowIso = new Date().toISOString();
+      // Tie the lead to the NEW dealer's active order so it counts toward THEIR tally
+      // (and drops off the old dealer's). No active order for them → no order tie.
+      let newOrderId: string | null = null, newOrderNumber: number | null = null;
+      try {
+        const os = await ctx.db.collection("dvOrders").where("dealerId", "==", dealer.id).get();
+        const activeDoc = os.docs.find((d: any) => d.data().status === "active");
+        if (activeDoc) { newOrderId = activeDoc.id; newOrderNumber = activeDoc.data().number ?? null; }
+      } catch {}
+      await ref.update({
+        assignment: {
+          ...prev,
+          dealerId: dealer.id, dealerName: dealer.name, dealerEmail: dealer.email,
+          orderId: newOrderId, orderNumber: newOrderNumber,
+          reassignedAt: nowIso, reassignedBy: ctx.email, reassignedFrom: prev.dealerId || null,
+          delivery: "emailed",
+        },
+      });
+      // Re-send the lead sheet to the new dealer so they actually receive it.
+      let emailed = false;
+      try {
+        const resend = getResendClient();
+        const applicantName = [lead.applicant?.firstName, lead.applicant?.lastName].filter(Boolean).join(" ") || "New applicant";
+        const { error: mailErr } = await resend.emails.send({
+          from: LEAD_FROM_EMAIL,
+          to: dealer.email,
+          subject: `Reassigned lead — ${applicantName} · ${lead.vehicle?.type || "vehicle"} · ${lead.applicant?.address?.city || lead.applicant?.address?.province || "Canada"}`,
+          html: renderLeadEmail(lead),
+        });
+        if (mailErr) console.error("[DV-REASSIGN] Resend error:", mailErr);
+        else emailed = true;
+      } catch (e: any) {
+        console.error("[DV-REASSIGN] email failed:", e?.message || e);
+      }
+      res.json({ success: true, emailed, dealerName: dealer.name });
+    } catch (err: any) {
+      console.error("[DV-LEAD-REASSIGN] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to reassign lead." });
+    }
+  });
+
+  // --- Admin: start a new order for a dealer ---
+  // Closes the dealer's active order, opens a new one (given size), and releases
+  // any HELD leads (oldest first) into it — emailing them — up to the new size.
+  app.post("/api/dv-orders/start", async (req, res) => {
+    try {
+      const ctx = await requireAdmin(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { dealerId, size } = req.body || {};
+      const dealer = DEALERS.find((d) => d.id === dealerId);
+      if (!dealer) return res.status(400).json({ error: "Unknown dealer." });
+      const orderSize = Math.max(1, Math.min(100000, Math.floor(Number(size) || dealer.monthlyCap || 150)));
+
+      const allSnap = await ctx.db.collection("dvOrders").where("dealerId", "==", dealerId).get();
+      for (const d of allSnap.docs) {
+        if (d.data().status === "active") {
+          await d.ref.update({ status: "closed", closedAt: new Date().toISOString(), closedBy: ctx.email });
+        }
+      }
+      const number = allSnap.size + 1;
+      const orderRef = await ctx.db.collection("dvOrders").add({
+        dealerId, dealerName: dealer.name, number, size: orderSize, status: "active",
+        createdAt: new Date().toISOString(), createdBy: ctx.email,
+      });
+
+      // Release held leads (oldest first) into the new order until it's full.
+      let released = 0;
+      let releaseFailed = 0;
+      const heldSnap = await ctx.db.collection("dvLeads").where("assignment.dealerId", "==", dealerId).get();
+      const heldDocs = heldSnap.docs
+        .filter((d: any) => d.data().assignment?.delivery === "held")
+        .sort((a: any, b: any) => (a.data().submittedAtMs || 0) - (b.data().submittedAtMs || 0));
+      for (const hd of heldDocs) {
+        if (released >= orderSize) break;
+        const r = hd.data();
+        try {
+          const resend = getResendClient();
+          const applicantName = [r.applicant?.firstName, r.applicant?.lastName].filter(Boolean).join(" ") || "New applicant";
+          const { error: mailErr } = await resend.emails.send({
+            from: LEAD_FROM_EMAIL,
+            to: dealer.email,
+            subject: `New lead — ${applicantName} · ${r.vehicle?.type || "vehicle"} · ${r.applicant?.address?.city || r.applicant?.address?.province || "Canada"}`,
+            html: renderLeadEmail(r),
+          });
+          if (mailErr) {
+            releaseFailed++;
+            await hd.ref.update({ "assignment.delivery": "failed", "assignment.orderId": orderRef.id, "assignment.orderNumber": number });
+          } else {
+            released++;
+            await hd.ref.update({ "assignment.delivery": "emailed", "assignment.deliveredAt": new Date().toISOString(), "assignment.orderId": orderRef.id, "assignment.orderNumber": number });
+          }
+        } catch (e: any) {
+          releaseFailed++;
+          console.error("[DV-ORDERS] release email failed:", e?.message || e);
+        }
+      }
+
+      res.json({ success: true, orderNumber: number, size: orderSize, released, releaseFailed });
+    } catch (err: any) {
+      console.error("[DV-ORDERS] start error:", err?.message || err);
+      res.status(500).json({ error: "Failed to start order." });
+    }
+  });
+
+  // --- Customer portal: a signed-in customer's OWN applications (matched by email) ---
+  // Any signed-in customer (email-link auth) — not admin-gated. Returns only their
+  // own dealership applications with customer-safe fields (no internal notes/assignee).
+  app.get("/api/my-applications", async (req, res) => {
+    try {
+      const authz = req.get("authorization") || "";
+      const token = authz.startsWith("Bearer ") ? authz.slice(7).trim() : "";
+      if (!token) return res.status(401).json({ error: "Not signed in." });
+      const { admin, db } = await getFirestoreAdmin();
+      let decoded: any;
+      try {
+        decoded = await admin.auth().verifyIdToken(token);
+      } catch {
+        return res.status(401).json({ error: "Session expired — please sign in again." });
+      }
+      const email = (decoded.email || "").trim();
+      if (!email) return res.status(400).json({ error: "No email on your account." });
+
+      const emails = Array.from(new Set([email, email.toLowerCase()]));
+      const seen = new Set<string>();
+      const applications: any[] = [];
+      for (const e of emails) {
+        const snap = await db.collection("leads").where("email", "==", e).get();
+        snap.forEach((d: any) => {
+          if (seen.has(d.id)) return;
+          seen.add(d.id);
+          const x = d.data() || {};
+          applications.push({
+            id: d.id,
+            createdAt: x.createdAt?.toDate ? x.createdAt.toDate().toISOString() : (x.createdAt || null),
+            status: x.status || "new",
+            type: x.type || "financing",
+            vehicleType: x.vehicleType || null,
+            price: x.price || null,
+            downPayment: x.downPayment || null,
+          });
+        });
+      }
+      applications.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+      res.json({ email, name: decoded.name || null, applications });
+    } catch (err: any) {
+      console.error("[MY-APPS] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to load your applications." });
+    }
+  });
+
+  // ===================== In-house CRM: Deals board =====================
+  // Mirrors the dealership Pipedrive "Working" pipeline. Reads the `leads`
+  // collection (dealership financing apps) as deals; staff move them between
+  // stages and add notes. Served via firebase-admin so no client rule changes.
+  const DEAL_STAGES = [
+    { key: "contact_made", label: "Contact Made" },
+    { key: "dealertrack", label: "Submitted in Dealertrack" },
+    { key: "approved", label: "Approved" },
+    { key: "agreed", label: "Agreed to Buy" },
+    { key: "delivery", label: "Delivery Status" },
+    { key: "complete", label: "Complete" },
+  ];
+
+  // Staff = any admin role OR a sales rep (reps live in the Deals board).
+  const requireStaff = async (
+    req: express.Request,
+  ): Promise<{ db: any; admin: any; email: string; uid: string; name: string; role: string | null } | { error: number; message: string }> => {
+    const authz = req.get("authorization") || "";
+    const token = authz.startsWith("Bearer ") ? authz.slice(7).trim() : "";
+    if (!token) return { error: 401, message: "Not signed in." };
+    const { admin, db } = await getFirestoreAdmin();
+    let decoded: any;
+    try {
+      decoded = await admin.auth().verifyIdToken(token);
+    } catch {
+      return { error: 401, message: "Session expired — please sign in again." };
+    }
+    const email = (decoded.email || "").toLowerCase();
+    if (!email.endsWith("@drivevac.ca")) return { error: 403, message: "Only @drivevac.ca accounts can access the VAC admin." };
+    let role: string | null = null;
+    let name: string = decoded.name || email;
+    if (decoded.uid) {
+      const u = await db.collection("users").doc(decoded.uid).get();
+      if (u.exists) { role = u.get("role"); name = u.get("displayName") || name; }
+    }
+    const ok = email === "j.jackson@drivevac.ca" ||
+      ["super_admin", "general_manager", "finance_manager", "sales_rep"].includes(role || "");
+    if (!ok) return { error: 403, message: "Staff access required." };
+    return { db, admin, email, uid: decoded.uid, name, role };
+  };
+
+  app.get("/api/deals", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const usersSnap = await ctx.db.collection("users").get();
+      const repName: Record<string, string> = {};
+      usersSnap.forEach((u: any) => { repName[u.id] = u.get("displayName") || u.get("email") || "—"; });
+      // Only deals explicitly placed on the board carry a valid `stage`. We do NOT
+      // dump every lead onto the board — a lead joins the board when it gets a stage.
+      const stageKeys = DEAL_STAGES.map((s) => s.key);
+      const snap = await ctx.db.collection("leads").where("stage", "in", stageKeys).limit(1000).get();
+      const deals = snap.docs.map((d: any) => {
+        const x = d.data() || {};
+        return {
+          id: d.id,
+          name: [x.firstName, x.lastName].filter(Boolean).join(" ") || x.name || "—",
+          email: x.email || "",
+          phone: x.phone || "",
+          vehicle: x.vehicleType || x.vehicleName || "",
+          price: x.price || null,
+          downPayment: x.downPayment || null,
+          annualIncome: x.annualIncome || null,
+          monthlyHousing: x.monthlyHousing || null,
+          address: x.fullAddress || null,
+          dob: x.dateOfBirth || x.dob || null,
+          type: x.type || "financing",
+          stage: DEAL_STAGES.some((s) => s.key === x.stage) ? x.stage : "contact_made",
+          assignedTo: x.assignedTo || null,
+          repName: x.assignedTo ? (repName[x.assignedTo] || "Unassigned") : "Unassigned",
+          createdAt: x.createdAt?.toDate ? x.createdAt.toDate().toISOString() : (x.createdAt || null),
+          notes: Array.isArray(x.dealNotes) ? x.dealNotes : [],
+          intakeNote: typeof x.notes === "string" && x.notes.trim() ? x.notes.trim() : null,
+        };
+      });
+      deals.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+      res.json({ deals, stages: DEAL_STAGES });
+    } catch (err: any) {
+      console.error("[DEALS] list error:", err?.message || err);
+      res.status(500).json({ error: "Failed to load deals." });
+    }
+  });
+
+  app.post("/api/deal-update", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { id, stage, note } = req.body || {};
+      if (!id || typeof id !== "string") return res.status(400).json({ error: "Missing deal id." });
+
+      const update: any = { updatedAt: new Date() };
+      if (stage) {
+        if (!DEAL_STAGES.some((s) => s.key === stage)) return res.status(400).json({ error: "Invalid stage." });
+        update.stage = stage;
+      }
+      let addedNote: any = null;
+      if (note && String(note).trim()) {
+        addedNote = { text: String(note).trim().slice(0, 4000), by: ctx.uid, byName: ctx.name, at: new Date().toISOString() };
+        update.dealNotes = ctx.admin.firestore.FieldValue.arrayUnion(addedNote);
+      }
+      if (!stage && !addedNote) return res.status(400).json({ error: "Nothing to update." });
+
+      await ctx.db.collection("leads").doc(id).update(update);
+      res.json({ success: true, note: addedNote });
+    } catch (err: any) {
+      console.error("[DEAL-UPDATE] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to update the deal." });
+    }
+  });
+  // ===================================================================
+  // IN-HOUSE CRM (Phase 1) — mirror Pipedrive leads into our own `crmLeads`
+  // collection with a clean schema, so we can eventually migrate off Pipedrive.
+  // Pipedrive custom-field hash -> clean field name.
+  const CRM_FIELDS: Record<string, string> = {
+    "daee3baeeba75f1262c5a59c2d5fae9e0ab9824b": "firstName",
+    "45db65ef76c70f04bd5c6a161e4d48b3e3fb52b8": "lastName",
+    "1607078230a6742a6afc8f68968b09f7de12d1bb": "dob",
+    "9902ecfb207e316c980c1264d302e7e48a86bf4a": "phone",
+    "9649ec95be44509028395a4b4cedd772d133534c": "email",
+    "7654290790c763a2afe25568df76093670091d83": "street",
+    "9cf433c83609faf834036edec7e675fd5676e694": "suite",
+    "8ace800abf264d012c73a8eef1d6d5cf9f0c160c": "city",
+    "bedcc069f503187bd05b3a221cf5f1509d37f36b": "province",
+    "eaad668062db5c899096f99eba83a34e672a8503": "postal",
+    "6150c2ed44b168d6dba7472be2aa2366e7d6fc42": "lookingFor",
+    "34dbe5967fd0d9b18db6b026468a27618f0ff888": "budget",
+    "125897eb1ad0cf18f0f1bdb03064058e9528fca0": "downPayment",
+    "f8683d67228e1316880a7a15e719b80f68d58f49": "hasTradeIn",
+    "f33681a3d38a9526fecd9704aae5d20abc7ab76f": "employmentStatus",
+    "a1bf2e94dd027089a4091f45b71fb1f18d79e5d6": "employer",
+    "5ad151377579cf87e71e4565d3bc7dfc2e62b153": "jobTitle",
+    "6df9a9fd090d038e8eb836fce00c2a89f3187289": "hourlyWage",
+    "b327c0938c9ab66eaee6806a22ff5716252d2cc7": "hoursPerWeek",
+    "7850c2c90305c2d65ce8c81dc07f92bcfecddae0": "monthlyIncome",
+    "d9e541eadb637ab076a189134019c1c96c26e8f9": "timeOnJob",
+    "366f5d279222b4c36bd1b3a4cccd4d2d67b77833": "rentOrOwn",
+    "5530e4ac6b144e965c80fc49a18237591ee0b2a3": "monthlyPayment",
+    "1d73b415c786bb6e1feefd137f3362d7df057fda": "timeAtAddress",
+    "f72c950606278711225de1c6d279e3bae6e14331": "validLicense",
+    "a7c81ae79890d65ac301296c947f335e91730146": "leadSource",
+    "f805e9aac832acb583d7e9f293711e48222bc402": "creditSelfRating",
+    "6ae2b9103295bf3b6b8fc1218762fc231edb8499": "citizenOrPR",
+    "43a9d5f5592e07c8b7fb771e4df6a767f188130f": "applicationId",
+  };
+  // Enum option-id -> label (for single-option Pipedrive fields).
+  const CRM_ENUMS: Record<string, Record<number, string>> = {
+    "f72c950606278711225de1c6d279e3bae6e14331": { 201: "Yes", 202: "No" }, // Valid Drivers License
+  };
+  // Unified pipeline — everything is a lead, one board. New leads land in "New Lead".
+  // "Not Approved" and "Lost" are terminal exits. Distribution (drip/round-robin/timeouts)
+  // is handled by the n8n engine, which reads owner + crmPresence (active reps).
+  const CRM_STAGES = [
+    { key: "new_lead", label: "New Lead" },
+    { key: "attempting_contact", label: "Attempting Contact" },
+    { key: "dealertrack", label: "Submitted to Dealertrack" },
+    { key: "approved", label: "Approved" },
+    { key: "signed", label: "Signed" },
+    { key: "lost", label: "Lost" },
+    { key: "free_to_call", label: "Free to Call Pool" },   // released leads — own tab, not a board column
+  ];
+  const pipedriveLeadToCrm = (lead: any) => {
+    const mapped: Record<string, any> = {};
+    for (const [hash, name] of Object.entries(CRM_FIELDS)) {
+      let val = lead[hash];
+      if (val === undefined || val === null || val === "") continue;
+      const em = CRM_ENUMS[hash];
+      if (em && em[Number(val)]) val = em[Number(val)];
+      mapped[name] = val;
+    }
+    return {
+      pipedriveLeadId: String(lead.id),
+      pipedrivePersonId: lead.person_id ?? null,
+      ownerId: lead.owner_id ?? null,
+      title: lead.title ?? null,
+      labelIds: lead.label_ids || [],
+      addTime: lead.add_time ?? null,
+      updateTime: lead.update_time ?? null,
+      ...mapped,
+      pipedriveRaw: lead, // full record kept for migration safety
+    };
+  };
+
+  // Import one Pipedrive lead into crmLeads (by id, or the most recent if none given).
+  app.post("/api/crm/import", async (req, res) => {
+    try {
+      const ctx = await requireAdmin(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const apiToken = process.env.PIPEDRIVE_API_TOKEN;
+      if (!apiToken) return res.status(500).json({ error: "PIPEDRIVE_API_TOKEN not configured." });
+      const { pipedriveLeadId } = req.body || {};
+      let lead: any = null;
+      if (pipedriveLeadId) {
+        const r = await fetchWithTimeout(`https://api.pipedrive.com/v1/leads/${pipedriveLeadId}?api_token=${apiToken}`);
+        lead = (await r.json())?.data || null;
+      } else {
+        const r = await fetchWithTimeout(`https://api.pipedrive.com/v1/leads?sort=add_time%20DESC&limit=1&api_token=${apiToken}`);
+        lead = ((await r.json())?.data || [])[0] || null;
+      }
+      if (!lead) return res.status(404).json({ error: "No lead found in Pipedrive." });
+      let notes: any[] = [];
+      try {
+        const nr = await fetchWithTimeout(`https://api.pipedrive.com/v1/notes?lead_id=${lead.id}&api_token=${apiToken}`);
+        notes = ((await nr.json())?.data || []).map((n: any) => ({ content: n.content, addTime: n.add_time, byName: n.user?.name || null }));
+      } catch {}
+      const docRef = ctx.db.collection("crmLeads").doc(String(lead.id));
+      const existing = await docRef.get();
+      const record: any = {
+        ...pipedriveLeadToCrm(lead),
+        notes,
+        source: "pipedrive-import",
+        importedAt: new Date().toISOString(),
+        importedBy: ctx.email,
+      };
+      // New leads land in "New Lead"; a re-import never drags a worked lead backwards.
+      if (!existing.exists || !existing.get("stage")) record.stage = "new_lead";
+      await docRef.set(record, { merge: true });
+      res.json({ success: true, lead: { id: String(lead.id), ...record } });
+    } catch (err: any) {
+      console.error("[CRM-IMPORT] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to import lead." });
+    }
+  });
+
+  // List CRM leads (our own copy) + the pipeline stages, sales team, and who's
+  // currently signed in as "active" (the roster the distribution engine reads).
+  app.get("/api/crm/leads", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      // Board/Inbox = the ACTIVE pipeline only. free_to_call (the 35k+ archive pool) and
+      // lost/nurture have their own paginated endpoints — never load them here.
+      const ACTIVE_STAGES = ["new_lead", "attempting_contact", "dealertrack", "approved", "signed"];
+      const snap = await ctx.db.collection("crmLeads")
+        .where("stage", "in", ACTIVE_STAGES)
+        .orderBy("addTime", "desc").limit(1000).get();
+      let leads = snap.docs.map((d: any) => ({ id: d.id, ...(d.data() || {}) }));
+      // Sales team = the rep directory (crmReps). Presence (active) lives on each rep.
+      const repsSnap = await ctx.db.collection("crmReps").get();
+      // Reps only ever see ASSIGNED leads — unassigned leads wait in the admin
+      // Inbox until they're dispersed. Admins get everything (Inbox + board).
+      if (ctx.role === "sales_rep") {
+        const myRepIds = new Set(repsSnap.docs.filter((d: any) => d.get("uid") === ctx.uid).map((d: any) => d.id));
+        leads = leads.filter((l: any) => l.owner);   // reps see only their assigned, active leads
+      }
+      const reps = repsSnap.docs
+        .filter((d: any) => d.get("archived") !== true)   // offboarded reps drop out of dropdowns/rotation
+        .map((d: any) => ({
+          id: d.id, name: d.get("name") || "—",
+          quoNumber: d.get("quoNumber") || null,
+          active: d.get("active") === true,
+          uid: d.get("uid") || null,
+        })).sort((a: any, b: any) => a.name.localeCompare(b.name));
+      // Which rep is the signed-in user (so the client can scope "my leads" + presence).
+      let myRep = reps.find((r: any) => r.uid && r.uid === ctx.uid);
+      // First-login linking: connect this account to its rep record by email.
+      if (!myRep && ctx.email) {
+        const match = repsSnap.docs.find((d: any) => (d.get("email") || "").toLowerCase() === ctx.email && d.get("archived") !== true);
+        if (match && match.get("uid") !== ctx.uid) {
+          try { await match.ref.update({ uid: ctx.uid }); } catch {}
+          myRep = reps.find((r: any) => r.id === match.id);
+          if (myRep) myRep.uid = ctx.uid;
+        }
+      }
+      res.json({ leads, stages: CRM_STAGES, reps, myRepId: myRep ? myRep.id : null, role: ctx.role });
+    } catch (err: any) {
+      console.error("[CRM-LEADS] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to load CRM leads." });
+    }
+  });
+
+  // Update a CRM lead: move stage, log an activity/contact note, or (re)assign owner.
+  app.post("/api/crm/lead-update", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { id, stage, note, owner, ownerName, lostReason, nurtureAt, lostNote, fields } = req.body || {};
+      if (!id || typeof id !== "string") return res.status(400).json({ error: "Missing lead id." });
+      const now = new Date().toISOString();
+      const update: any = { updatedAt: now };
+      // Rep-editable lead fields (correct a customer's typo while confirming details).
+      const EDITABLE = new Set([
+        "firstName", "lastName", "phone", "email", "dob", "street", "suite", "city", "province", "postal",
+        "lookingFor", "budget", "downPayment", "hasTradeIn", "employmentStatus", "employer", "jobTitle",
+        "hourlyWage", "monthlyIncome", "hoursPerWeek", "timeOnJob", "rentOrOwn", "monthlyPayment",
+        "timeAtAddress", "creditSelfRating", "validLicense", "citizenOrPR",
+      ]);
+      const hasFields = fields && typeof fields === "object" && Object.keys(fields).length > 0;
+      // Income drives underwriting — only managers/admins may change it. Reps get a clear error.
+      const INCOME_LOCKED = new Set(["hourlyWage", "monthlyIncome", "hoursPerWeek"]);
+      if (hasFields && ctx.role === "sales_rep") {
+        const blocked = Object.keys(fields).filter((k) => INCOME_LOCKED.has(k));
+        if (blocked.length) return res.status(403).json({ error: "Income fields (wage, monthly income, hours) can only be changed by a manager." });
+      }
+      if (hasFields) {
+        for (const [k, val] of Object.entries(fields)) {
+          if (!EDITABLE.has(k)) continue;
+          update[k] = val == null || val === "" ? null : String(val).slice(0, 500);
+        }
+        if (Object.prototype.hasOwnProperty.call(fields, "phone")) {
+          update.phoneKey = fields.phone ? String(fields.phone).replace(/\D+/g, "").slice(-10) : null; // keep Quo matching in sync
+        }
+      }
+      if (stage !== undefined) {
+        if (!CRM_STAGES.some((s) => s.key === stage)) return res.status(400).json({ error: "Invalid stage." });
+        update.stage = stage;
+        if (stage !== "lost") update.lostReason = null;   // leaving Lost clears the reason
+        // Record the transition (from → to, who, when) for per-rep pipeline reporting.
+        const cur = await ctx.db.collection("crmLeads").doc(id).get();
+        const from = cur.exists ? (cur.get("stage") || null) : null;
+        if (from !== stage) {
+          // No going backwards from a worked stage to New Lead / Attempting Contact —
+          // a lead that reached Dealertrack doesn't un-reach it, and it closes the
+          // "bounce out and back to reset the 3-day clock" loophole. Admins can
+          // still pull it back (mistakes happen); reps can't.
+          const ORDER = ["new_lead", "attempting_contact", "dealertrack", "approved", "signed"];
+          const fi = ORDER.indexOf(from || ""), ti = ORDER.indexOf(stage);
+          if (ctx.role === "sales_rep" && fi >= 2 && ti >= 0 && ti < fi) {
+            return res.status(400).json({ error: "Leads can't move backwards from here. If it's not going ahead, mark it Lost — or ask a manager." });
+          }
+          update.stageHistory = ctx.admin.firestore.FieldValue.arrayUnion({ from, to: stage, by: ctx.email, byUid: ctx.uid, at: now });
+          if (stage === "attempting_contact") {
+            update.lastAttemptAt = now;
+            // Stamp the FIRST entry only — the 3-business-day clock never resets.
+            if (!cur.get("attemptingSince")) update.attemptingSince = now;
+          }
+        }
+      }
+      if (lostReason !== undefined) update.lostReason = lostReason ? String(lostReason).slice(0, 120) : null;
+      // Lost = "not now": park it in Nurture with a wake-up date (null = dead, no follow-up).
+      // Leaves the rep's board (owner cleared) — the lead becomes a company asset again.
+      if (stage === "lost") {
+        const nAt = nurtureAt ? new Date(String(nurtureAt)) : null;
+        update.nurtureAt = nAt && !isNaN(nAt.getTime()) ? nAt.toISOString() : null;
+        update.nurtureStatus = update.nurtureAt ? "sleeping" : "dead";
+        try {
+          const cur0 = await ctx.db.collection("crmLeads").doc(id).get();
+          update.lostBy = cur0.get("owner") || null; update.lostByName = cur0.get("ownerName") || null; update.lostAt = now;
+        } catch {}
+        update.owner = null; update.ownerName = null; update.assignedAt = null;
+        const ln = lostNote ? String(lostNote).trim().slice(0, 1000) : "";
+        update.lostNote = ln || null;
+        const wake = update.nurtureAt ? ` Wake-up ${String(update.nurtureAt).slice(0, 10)}.` : " No follow-up.";
+        update.__lostEntry = { text: `🚫 Marked lost — ${lostReason || "no reason"}.${ln ? `\n${ln}` : ""}${wake}`, by: ctx.name || ctx.email, byUid: ctx.uid, at: now, kind: "note" };
+        update.activityLog = ctx.admin.firestore.FieldValue.arrayUnion(update.__lostEntry);
+      }
+      if (owner !== undefined) {
+        update.owner = owner || null;                 // null = back to the "Vehicle Approval Centre" pool
+        update.ownerName = owner ? (ownerName || null) : null;
+        update.assignedAt = owner ? now : null;
+      }
+      let addedNote: any = null;
+      if (note && String(note).trim()) {
+        addedNote = { text: String(note).trim().slice(0, 4000), by: ctx.name || ctx.email, byEmail: ctx.email, byUid: ctx.uid, at: now, kind: "note" };
+        update.activityLog = update.__lostEntry ? ctx.admin.firestore.FieldValue.arrayUnion(update.__lostEntry, addedNote) : ctx.admin.firestore.FieldValue.arrayUnion(addedNote);
+        update.lastAttemptAt = now;                    // resets the "stale" timer the engine watches
+      }
+      if (stage === undefined && owner === undefined && !addedNote && !hasFields)
+        return res.status(400).json({ error: "Nothing to update." });
+      delete update.__lostEntry;
+      await ctx.db.collection("crmLeads").doc(id).update(update);
+      res.json({ success: true, note: addedNote });
+    } catch (err: any) {
+      console.error("[CRM-LEAD-UPDATE] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to update lead." });
+    }
+  });
+
+  // Toggle a rep's "active" (signed-in) status on their directory record.
+  // Auto-assignment only routes to reps whose crmReps doc is active === true.
+  app.post("/api/crm/rep-active", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { repId, active } = req.body || {};
+      if (!repId || typeof repId !== "string") return res.status(400).json({ error: "Missing rep id." });
+      if (typeof active !== "boolean") return res.status(400).json({ error: "'active' must be true/false." });
+      const repRef = ctx.db.collection("crmReps").doc(repId);
+      const repSnap = await repRef.get();
+      if (!repSnap.exists) return res.status(404).json({ error: "Rep not found." });
+      // A rep may only sign themselves in/out; admins can toggle anyone.
+      if (ctx.role === "sales_rep" && repSnap.get("uid") !== ctx.uid) return res.status(403).json({ error: "You can only change your own status." });
+      const now = new Date().toISOString();
+      await repRef.update({ active, lastActiveAt: active ? now : null });
+      // Phase A: when a rep signs in DURING business hours, hand them the OLDEST
+      // waiting lead (just one — the heartbeat drips the rest). Before 9am / after
+      // 8pm / weekends, nothing is handed out; the pool holds until the next morning.
+      if (active === true && isBusinessHours()) {
+        try {
+          const snap = await ctx.db.collection("crmLeads").orderBy("addTime", "desc").limit(100).get();
+          const waiting = snap.docs
+            .filter((d: any) => !d.get("owner"))
+            .sort((a: any, b: any) => String(a.get("addTime") || "").localeCompare(String(b.get("addTime") || "")));
+          if (waiting.length) {
+            await waiting[0].ref.update({ owner: repId, ownerName: repSnap.get("name") || null, assignedAt: now, updatedAt: now });
+            await repRef.update({ lastAssignedAt: now });
+          }
+        } catch (pullErr: any) { console.error("[REP-ACTIVE] sign-in pull failed (non-fatal):", pullErr?.message || pullErr); }
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("[CRM-REP-ACTIVE] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to update rep status." });
+    }
+  });
+
+  // --- Team management (rep directory CRUD) — admin only ---
+  app.get("/api/crm/reps", async (req, res) => {
+    try {
+      const ctx = await requireAdmin(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const snap = await ctx.db.collection("crmReps").get();
+      const reps = snap.docs.map((d: any) => ({
+        id: d.id, name: d.get("name") || "—", quoNumber: d.get("quoNumber") || null,
+        active: d.get("active") === true, archived: d.get("archived") === true,
+        uid: d.get("uid") || null, pipedriveOwnerId: d.get("pipedriveOwnerId") || null,
+      })).sort((a: any, b: any) => (Number(a.archived) - Number(b.archived)) || a.name.localeCompare(b.name));
+      res.json({ reps });
+    } catch (err: any) {
+      console.error("[CRM-REPS] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to load reps." });
+    }
+  });
+
+  // Add a rep (onboard) or edit one. id omitted → create (slug from name).
+  app.post("/api/crm/rep-save", async (req, res) => {
+    try {
+      const ctx = await requireAdmin(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { id, name, quoNumber, email, title } = req.body || {};
+      const cleanName = String(name || "").trim();
+      if (!cleanName) return res.status(400).json({ error: "Name is required." });
+      const cleanEmail = email ? String(email).trim().toLowerCase() : null;
+      if (cleanEmail && !cleanEmail.endsWith("@drivevac.ca")) return res.status(400).json({ error: "Rep email must be an @drivevac.ca address." });
+      // Store the Quo number in E.164 (+1XXXXXXXXXX) regardless of how it was typed.
+      const quoDigits = quoNumber ? String(quoNumber).replace(/\D+/g, "") : "";
+      const quo = quoDigits ? (quoDigits.length === 10 ? `+1${quoDigits}` : `+${quoDigits}`) : null;
+      const quoKey = quoDigits ? quoDigits.slice(-10) : null;
+      const slug = (id && String(id).trim()) || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      if (!slug) return res.status(400).json({ error: "Invalid name." });
+      const ref = ctx.db.collection("crmReps").doc(slug);
+      const exists = (await ref.get()).exists;
+      const data: any = { name: cleanName, quoNumber: quo, quoKey, archived: false };
+      if (cleanEmail) data.email = cleanEmail;
+      if (title !== undefined) data.title = String(title || "").trim().slice(0, 80) || null;   // job title for the email signature
+      if (!exists) data.active = false;
+      await ref.set(data, { merge: true });
+
+      // Onboarding: create/refresh an invitation so this @drivevac.ca email gets the
+      // sales_rep role on first sign-in, and email them an invite to set up + PIN.
+      let invited = false;
+      if (cleanEmail) {
+        try {
+          const inviteRef = ctx.db.collection("invitations").doc(cleanEmail);
+          const alreadyUser = !(await ctx.db.collection("users").where("email", "==", cleanEmail).limit(1).get()).empty;
+          await inviteRef.set({ email: cleanEmail, role: "sales_rep", status: "pending", invitedBy: ctx.email, name: cleanName, createdAt: new Date().toISOString() }, { merge: true });
+          if (!alreadyUser) {
+            const link = "https://vehicleapprovalcentre.com/admin?tab=crm";
+            const html = `<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:520px;margin:0 auto;color:#41456B">
+              <div style="background:linear-gradient(135deg,#7380FF,#41456B);padding:28px 24px;border-radius:16px 16px 0 0;text-align:center">
+                <h1 style="color:#fff;margin:0;font-size:22px">Welcome to the VAC CRM</h1>
+              </div>
+              <div style="background:#fff;border:1px solid #eee;border-top:0;border-radius:0 0 16px 16px;padding:28px 24px">
+                <p style="font-size:15px;line-height:1.6">Hi ${cleanName.replace(/[<>&]/g, "")},</p>
+                <p style="font-size:15px;line-height:1.6">You've been added to the <b>Vehicle Approval Centre</b> sales CRM. Click below, sign in with your <b>@drivevac.ca</b> Google account, and set up your PIN to get started.</p>
+                <p style="text-align:center;margin:26px 0">
+                  <a href="${link}" style="background:#7380FF;color:#fff;text-decoration:none;font-weight:700;padding:13px 26px;border-radius:10px;display:inline-block;font-size:15px">Set up my account</a>
+                </p>
+                <p style="font-size:13px;color:#888;line-height:1.6">Once you're in, flip yourself <b>Active</b> to start receiving leads. Questions? Just reply to this email.</p>
+              </div>
+            </div>`;
+            const resend = getResendClient();
+            await resend.emails.send({ from: "Vehicle Approval Centre <admin@drivevac.ca>", to: cleanEmail, subject: "You're invited to the VAC CRM", html });
+            invited = true;
+          }
+        } catch (e: any) { console.error("[REP-SAVE] invite failed (non-fatal):", e?.message || e); }
+      }
+      res.json({ success: true, id: slug, invited });
+    } catch (err: any) {
+      console.error("[REP-SAVE] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to save rep." });
+    }
+  });
+
+  // Offboard a rep — archive (keeps history, removes from dropdowns/rotation).
+  app.post("/api/crm/rep-remove", async (req, res) => {
+    try {
+      const ctx = await requireAdmin(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { id, restore } = req.body || {};
+      if (!id || typeof id !== "string") return res.status(400).json({ error: "Missing rep id." });
+      await ctx.db.collection("crmReps").doc(id).set(
+        { archived: restore ? false : true, active: false }, { merge: true });
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("[REP-REMOVE] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to update rep." });
+    }
+  });
+
+  // --- Quo call/text webhook → logs into the lead's CRM activity thread ---
+  // Quo POSTs here on call-completed / SMS events. We match the customer's phone
+  // to a crmLead and append a call/text entry to its activityLog. Field names are
+  // mapped DEFENSIVELY (many aliases) so it works against Quo's real payload with a
+  // one-line tweak once we have a sample. Auth = shared secret (QUO_WEBHOOK_SECRET)
+  // via header or ?token=. No secret set → allowed (for first-run testing) + warns.
+  app.post("/api/crm/quo-webhook", async (req, res) => {
+    try {
+      const secret = process.env.QUO_WEBHOOK_SECRET;
+      if (secret) {
+        const provided = req.get("x-quo-signature") || req.get("x-quo-secret") || req.get("x-webhook-secret")
+          || (req.query.token as string) || (req.query.secret as string) || "";
+        if (provided !== secret) return res.status(401).json({ error: "Bad webhook secret." });
+      } else {
+        console.warn("[QUO] QUO_WEBHOOK_SECRET not set — webhook is unauthenticated.");
+      }
+
+      const b = req.body || {};
+      const rawType = String(b.type || b.event || b.event_type || "").toLowerCase(); // envelope, e.g. "message.received"
+      // OpenPhone/Quo wraps the actual record in data.object.
+      const p = (b.data && b.data.object) || b.data || b.object || b;
+      const pick = (...keys: string[]) => {
+        for (const k of keys) {
+          const v = k.split(".").reduce((o: any, kk: string) => (o == null ? o : o[kk]), p);
+          if (v !== undefined && v !== null && v !== "") return v;
+        }
+        return undefined;
+      };
+
+      // Only log final, meaningful events — ignore ringing / message.sent / etc. to
+      // avoid noise and duplicate thread entries.
+      const ACCEPT = ["message.received", "message.delivered", "call.completed", "call.recording.completed"];
+      if (rawType && !ACCEPT.includes(rawType)) return res.json({ success: true, ignored: rawType });
+
+      const isRecording = rawType === "call.recording.completed";
+      const isCall = /call/.test(rawType) || pick("duration", "recording_url") !== undefined;
+      const hasBody = pick("body", "text", "message") !== undefined;
+      const isText = !isCall && (/message|sms|text/.test(rawType) || hasBody);
+      const dirRaw = String(pick("direction", "call_direction") || "").toLowerCase(); // outgoing / incoming
+      const direction = dirRaw.includes("out") ? "outbound" : dirRaw.includes("in") ? "inbound" : "";
+      const from = String(pick("from", "from_number", "caller") || "");
+      const to = String(pick("to", "to_number", "callee") || "");
+      const bodyText = pick("body", "text", "message");
+      const duration = pick("duration", "call_duration", "length");
+      let recording = pick("recording_url", "recordingUrl", "url");            // recordings arrive as a url…
+      if (!recording) { const media = pick("media"); if (Array.isArray(media) && media[0]) recording = media[0].url || media[0].link; } // …or in media[]
+      const externalId = String(pick("id") || "");                            // OpenPhone message/call id (AC…/CA…)
+      const quoUserId = String(pick("userId", "createdBy") || "");            // which Quo user made it → rep attribution
+      const tsRaw = pick("createdAt", "completedAt", "answeredAt", "timestamp", "created_at", "time") || b.createdAt;
+      let atIso = new Date().toISOString();
+      try { if (tsRaw) { const d = new Date(isNaN(Number(tsRaw)) ? tsRaw : Number(tsRaw)); if (!isNaN(d.getTime())) atIso = d.toISOString(); } } catch {}
+
+      // Match the customer's number (try both from & to) to a crmLead.
+      const { admin, db } = await getFirestoreAdmin();
+      const keys = [from, to].map(phoneKeyOf).filter((k) => k && k.length >= 7);
+      let match: any = null;
+      for (const k of keys) {
+        const q = await db.collection("crmLeads").where("phoneKey", "==", k).limit(5).get();
+        if (!q.empty) { match = q.docs.sort((a: any, x: any) => String(x.get("addTime") || "").localeCompare(String(a.get("addTime") || "")))[0]; break; }
+      }
+      if (!match) {
+        // Fallback for leads saved before phoneKey existed: bounded scan.
+        const recent = await db.collection("crmLeads").orderBy("addTime", "desc").limit(500).get();
+        match = recent.docs.find((d: any) => keys.includes(phoneKeyOf(d.get("phone")))) || null;
+      }
+      if (!match) { console.warn("[QUO] no lead match for", keys); return res.json({ success: true, matched: false }); }
+
+      // De-dupe by OpenPhone id (recording events share the call id, so let those through).
+      const existing = (match.get("activityLog") || []) as any[];
+      if (externalId && !isRecording && existing.some((a) => a && a.externalId === externalId && a.kind !== "recording")) {
+        return res.json({ success: true, duplicate: true });
+      }
+
+      const secs = Number(duration);
+      let text: string; let kind: string;
+      if (isRecording) {
+        kind = "recording";
+        text = `📼 Call recording available${recording ? `: ${recording}` : ""}`;
+      } else if (isText) {
+        kind = "text";
+        text = `💬 Text ${direction === "outbound" ? "sent" : "received"}${bodyText ? `: ${String(bodyText).slice(0, 1000)}` : ""}`;
+      } else {
+        kind = "call";
+        const status = String(pick("status") || "").toLowerCase();
+        const isVm = /voicemail/.test(status) || pick("voicemail") !== undefined;
+        const answered = (!isNaN(secs) && secs > 0) || /complet|answer|progress/.test(status);
+        const dirWord = direction === "outbound" ? "Outbound" : "Inbound";
+        if (isVm) {
+          text = `📼 Voicemail ${direction === "outbound" ? "left" : "from caller"}`;
+        } else if (answered) {
+          const dur = !isNaN(secs) && secs > 0 ? ` · ${Math.floor(secs / 60)}m ${secs % 60}s` : "";
+          text = `📞 ${dirWord} call${dur}`;
+        } else {
+          text = direction === "outbound" ? "📞 Outbound call · no answer" : "📞 Missed call";
+        }
+      }
+      // Attribute to the rep whose Quo LINE this went through — i.e. the from/to
+      // number that isn't the customer's (matched lead) number → crmReps.quoKey.
+      let by = "Quo"; let byRepId: string | undefined;
+      const custKey = phoneKeyOf(match.get("phone"));
+      const lineKey = [from, to].map(phoneKeyOf).find((k) => k && k !== custKey) || "";
+      if (lineKey) {
+        try { const rq = await db.collection("crmReps").where("quoKey", "==", lineKey).limit(1).get(); if (!rq.empty) { by = rq.docs[0].get("name") || by; byRepId = rq.docs[0].id; } } catch {}
+      }
+      const entry: any = { text, by, at: atIso, kind, direction, from, to, externalId, quoUserId };
+      if (byRepId) entry.byRepId = byRepId;
+      if (recording) entry.recording = String(recording);
+      await match.ref.update({
+        activityLog: admin.firestore.FieldValue.arrayUnion(entry),
+        lastAttemptAt: atIso,
+        updatedAt: new Date().toISOString(),
+      });
+      res.json({ success: true, matched: true, leadId: match.id, kind });
+    } catch (err: any) {
+      console.error("[QUO-WEBHOOK] error:", err?.message || err);
+      res.status(500).json({ error: "Webhook processing failed." });
+    }
+  });
+
+  // --- Send an SMS to a lead THROUGH Quo/OpenPhone, from the CRM thread ---
+  // Logs the sent text with the OpenPhone message id as externalId, so the
+  // later message.delivered webhook de-dupes against it (no double entry).
+  // ---- Reports: per-rep effort & outcomes over a date range -----------------
+  // Attribution: activity entries carry byRepId (Quo + sent texts), byUid (notes,
+  // stage moves) or by=email — all resolved to a crmReps record here.
+  app.get("/api/crm/reports", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const days = Math.min(365, Math.max(1, Number(req.query.days) || 30));
+      const since = new Date(Date.now() - days * 86_400_000);
+      const sinceIso = since.toISOString();
+
+      const repsSnap = await ctx.db.collection("crmReps").get();
+      // Shared/pool accounts (poolAccount: true, e.g. "Leads VAC") aren't salespeople —
+      // they'd just soak up every inbound on the shared line. Excluded from the scorecard.
+      const reps: any[] = repsSnap.docs.map((d: any) => ({ id: d.id, ...(d.data() || {}) })).filter((r: any) => !r.archived && !r.poolAccount);
+      const byRepId = new Map<string, any>(), byUid = new Map<string, any>(), byEmail = new Map<string, any>();
+      for (const r of reps) { byRepId.set(r.id, r); if (r.uid) byUid.set(r.uid, r); if (r.email) byEmail.set(String(r.email).toLowerCase(), r); }
+      const resolve = (e: any): any | null =>
+        (e?.byRepId && byRepId.get(e.byRepId)) || (e?.byUid && byUid.get(e.byUid)) || (e?.byEmail && byEmail.get(String(e.byEmail).toLowerCase())) || (e?.by && byEmail.get(String(e.by).toLowerCase())) || null;
+
+      const blank = () => ({ assigned: 0, calls: 0, texts: 0, notes: 0, touches: 0, leadsTouched: 0, inboundReplies: 0,
+        toDealertrack: 0, approved: 0, signed: 0, lost: 0, released: 0, releasedNoEffort: 0, bounced: 0,
+        firstContactMins: [] as number[], activeLeads: 0, untouchedLeads: 0 });
+      const stats: Record<string, any> = {};
+      for (const r of reps) stats[r.id] = { rep: { id: r.id, name: r.name, active: !!r.active }, ...blank() };
+      const touchedSets: Record<string, Set<string>> = {}; for (const r of reps) touchedSets[r.id] = new Set();
+
+      const leadsSnap = await ctx.db.collection("crmLeads").get();
+      let totalLeads = 0, poolNow = 0;
+      for (const d of leadsSnap.docs) {
+        const l: any = d.data() || {}; totalLeads++;
+        if (!l.owner) poolNow++;
+        // Current-book snapshot (not date-bounded): what each rep is holding right now.
+        if (l.owner && stats[l.owner] && !["signed", "lost"].includes(l.stage || "")) {
+          stats[l.owner].activeLeads++;
+          const log: any[] = l.activityLog || [];
+          const repTouched = log.some((a) => resolve(a)?.id === l.owner && a.by !== "System");
+          if (!repTouched) stats[l.owner].untouchedLeads++;
+        }
+        // Assignments in window
+        if (l.assignedAt && l.assignedAt >= sinceIso && l.owner && stats[l.owner]) stats[l.owner].assigned++;
+        // Activity in window
+        const log: any[] = l.activityLog || [];
+        let firstOutboundAt: number | null = null;
+        for (const a of log) {
+          if (!a || !a.at || a.at < sinceIso) continue;
+          if (a.bounce && a.bouncedFrom && stats[a.bouncedFrom]) { stats[a.bouncedFrom].bounced++; continue; }   // hot-lead bounce AWAY from this rep
+          if (a.direction === "inbound") { const owner = l.owner && stats[l.owner]; if (owner) owner.inboundReplies++; continue; }
+          const r = resolve(a); if (!r || !stats[r.id]) continue;
+          const s = stats[r.id];
+          if (a.kind === "call") s.calls++; else if (a.kind === "text") s.texts++; else s.notes++;
+          s.touches++; touchedSets[r.id].add(d.id);
+          if (a.kind === "call" || a.kind === "text") { const t = Date.parse(a.at); if (firstOutboundAt == null || t < firstOutboundAt) firstOutboundAt = t; }
+        }
+        if (firstOutboundAt != null && l.assignedAt && l.owner && stats[l.owner]) {
+          const mins = (firstOutboundAt - Date.parse(l.assignedAt)) / 60000;
+          if (mins >= 0 && mins < 60 * 24 * 30) stats[l.owner].firstContactMins.push(mins);
+        }
+        // Stage outcomes in window (credited to who moved it)
+        for (const h of (l.stageHistory || [])) {
+          if (!h || !h.at || h.at < sinceIso) continue;
+          if (h.by === "system:free-to-call") {
+            const from = l.releaseStats?.from || l.releasedFrom; const s = from && stats[from];
+            if (s) { s.released++; if (l.releaseStats && (l.releaseStats.calls + l.releaseStats.texts) === 0) s.releasedNoEffort++; }
+            continue;
+          }
+          const r = resolve(h); if (!r || !stats[r.id]) continue;
+          if (h.to === "dealertrack") stats[r.id].toDealertrack++;
+          if (h.to === "approved") stats[r.id].approved++;
+          if (h.to === "signed") stats[r.id].signed++;
+          if (h.to === "lost") stats[r.id].lost++;
+        }
+      }
+      const rows = Object.values(stats).map((s: any) => {
+        const fc = s.firstContactMins as number[]; fc.sort((a, b) => a - b);
+        const median = fc.length ? fc[Math.floor(fc.length / 2)] : null;
+        const { firstContactMins, ...rest } = s;
+        return { ...rest, leadsTouched: touchedSets[s.rep.id].size, medianFirstContactMins: median == null ? null : Math.round(median),
+          touchesPerLead: s.assigned ? +(s.touches / s.assigned).toFixed(1) : null };
+      }).sort((a: any, b: any) => b.touches - a.touches);
+      // Reps only see their own row.
+      const visible = ctx.role === "sales_rep" ? rows.filter((r: any) => byUid.get(ctx.uid)?.id === r.rep.id) : rows;
+      res.json({ days, since: sinceIso, totals: { leads: totalLeads, pool: poolNow }, rows: visible });
+    } catch (err: any) {
+      console.error("[CRM-REPORTS] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to build report." });
+    }
+  });
+
+  // Manual lead — a rep types in a walk-in / phone-in / referral. Assigned to the
+  // creating rep by default (or a chosen owner). Dedupes on phone so a customer
+  // who already applied online doesn't get a second card.
+  app.post("/api/crm/lead-create", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const b = req.body || {};
+      const s = (v: any, max = 200) => { const t = v == null ? "" : String(v).trim(); return t ? t.slice(0, max) : null; };
+      const firstName = s(b.firstName), lastName = s(b.lastName);
+      const phone = s(b.phone, 40), email = s(b.email, 200)?.toLowerCase() || null;
+      if (!firstName && !lastName) return res.status(400).json({ error: "A name is required." });
+      if (!phone && !email) return res.status(400).json({ error: "A phone number or email is required." });
+      const phoneKey = phone ? phone.replace(/\D+/g, "").slice(-10) : null;
+      if (phone && (!phoneKey || phoneKey.length < 10)) return res.status(400).json({ error: "Please enter a valid 10-digit phone number." });
+
+      // Dedupe: an existing lead with this phone → hand it back instead of duplicating.
+      if (phoneKey) {
+        const dup = await ctx.db.collection("crmLeads").where("phoneKey", "==", phoneKey).limit(1).get();
+        if (!dup.empty) {
+          const d = dup.docs[0];
+          return res.status(409).json({ error: "A lead with this phone number already exists.", existingId: d.id, existingName: [d.get("firstName"), d.get("lastName")].filter(Boolean).join(" ") });
+        }
+      }
+
+      // Owner: chosen rep, else the creating rep's own record, else unassigned (Inbox).
+      let owner: string | null = null, ownerName: string | null = null;
+      const wantOwner = s(b.owner, 120);
+      if (wantOwner) {
+        const r = await ctx.db.collection("crmReps").doc(wantOwner).get();
+        if (r.exists) { owner = r.id; ownerName = r.get("name") || null; }
+      } else {
+        const mine = await ctx.db.collection("crmReps").where("uid", "==", ctx.uid).limit(1).get();
+        if (!mine.empty) { owner = mine.docs[0].id; ownerName = mine.docs[0].get("name") || null; }
+      }
+
+      const nowIso = new Date().toISOString();
+      const rec: any = {
+        pipedriveLeadId: null, pipedrivePersonId: null,
+        title: [firstName, lastName].filter(Boolean).join(" "),
+        firstName, lastName, phone, phoneKey, email,
+        dob: s(b.dob, 20), street: s(b.street), suite: s(b.suite, 40), city: s(b.city, 100), province: s(b.province, 40), postal: s(b.postal, 20),
+        lookingFor: s(b.lookingFor, 120), budget: s(b.budget, 60), downPayment: s(b.downPayment, 40), hasTradeIn: s(b.hasTradeIn, 20),
+        employmentStatus: s(b.employmentStatus, 60), employer: s(b.employer), jobTitle: s(b.jobTitle),
+        hourlyWage: s(b.hourlyWage, 20), monthlyIncome: s(b.monthlyIncome, 20), hoursPerWeek: s(b.hoursPerWeek, 10), timeOnJob: s(b.timeOnJob, 40),
+        rentOrOwn: s(b.rentOrOwn, 20), monthlyPayment: s(b.monthlyPayment, 20), timeAtAddress: s(b.timeAtAddress, 40),
+        creditSelfRating: s(b.creditSelfRating, 40), validLicense: s(b.validLicense, 10), citizenOrPR: s(b.citizenOrPR, 10),
+        leadSource: s(b.leadSource, 60) || "Manual entry",
+        source: "manual", createdBy: ctx.email, createdByName: ctx.name || ctx.email,
+        stage: "new_lead", owner, ownerName, assignedAt: owner ? nowIso : null,
+        addTime: nowIso, updatedAt: nowIso,
+        activityLog: [{ text: `📝 Lead created manually by ${ctx.name || ctx.email}${s(b.note) ? ` — ${s(b.note, 1000)}` : ""}`, by: ctx.name || ctx.email, byUid: ctx.uid, at: nowIso, kind: "note" }],
+      };
+      const docRef = ctx.db.collection("crmLeads").doc();
+      await docRef.set(rec);
+      if (owner) { try { await ctx.db.collection("crmReps").doc(owner).update({ lastAssignedAt: nowIso }); } catch {} }
+      res.json({ success: true, id: docRef.id, lead: { id: docRef.id, ...rec } });
+    } catch (err: any) {
+      console.error("[LEAD-CREATE] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to create lead." });
+    }
+  });
+
+  // ---- Email via Gmail domain-wide delegation --------------------------------
+  // Sends AS the signed-in rep's own @drivevac.ca (lands in their real Sent folder),
+  // logs to the lead's thread. Which address: the rep's crmReps.email, else their login.
+  const repEmailFor = async (ctx: any): Promise<{ email: string; name: string; repId?: string }> => {
+    const mine = await ctx.db.collection("crmReps").where("uid", "==", ctx.uid).limit(1).get();
+    if (!mine.empty) { const r = mine.docs[0]; return { email: (r.get("email") || ctx.email).toLowerCase(), name: r.get("name") || ctx.name, repId: r.id }; }
+    return { email: ctx.email, name: ctx.name || ctx.email };
+  };
+  const esc = (s: string) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  const emailUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 5 } });
+  app.post("/api/crm/send-email", emailUpload.array("files", 5), async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { leadId, subject, body } = req.body || {};
+      if (!leadId || typeof leadId !== "string") return res.status(400).json({ error: "Missing lead id." });
+      const subj = String(subject || "").trim().slice(0, 200);
+      const text = String(body || "").trim().slice(0, 20000);
+      if (!subj) return res.status(400).json({ error: "Subject is required." });
+      if (!text) return res.status(400).json({ error: "Email body is empty." });
+
+      const leadRef = ctx.db.collection("crmLeads").doc(leadId);
+      const leadSnap = await leadRef.get();
+      if (!leadSnap.exists) return res.status(404).json({ error: "Lead not found." });
+      const to = String(leadSnap.get("email") || "").trim().toLowerCase();
+      if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return res.status(400).json({ error: "This lead has no valid email address." });
+
+      const from = await repEmailFor(ctx);
+      if (!from.email.endsWith("@drivevac.ca")) return res.status(400).json({ error: "Can only send from an @drivevac.ca address." });
+
+      // Reply in-thread if we've emailed this lead before — but a Gmail threadId only
+      // exists in the mailbox that sent it. If a DIFFERENT rep is sending now, start a
+      // fresh thread (Gmail returns "Requested entity was not found" otherwise).
+      const prevAll: any = leadSnap.get("emailThread") || null;
+      const prev: any = prevAll && String(prevAll.repEmail || "").toLowerCase() === from.email ? prevAll : null;
+      // Company-standard signature (WiseStamp layout), filled from the rep's record.
+      let sigRep: any = { name: from.name, email: from.email };
+      if (from.repId) { try { const r = await ctx.db.collection("crmReps").doc(from.repId).get(); if (r.exists) sigRep = { name: r.get("name") || from.name, title: r.get("title") || null, phone: r.get("phone") || null, mobile: r.get("mobile") || r.get("quoNumber") || null, email: from.email }; } catch {} }
+      const sigHtml = vacSignatureHtml(sigRep);
+      const sigText = `\n\n${sigRep.name}${sigRep.title ? `\n${sigRep.title}, Vehicle Approval Centre` : `\nVehicle Approval Centre`}${sigRep.mobile ? `\nMobile ${sigRep.mobile}` : ""}\nvehicleapprovalcentre.com · ${from.email}\nUnit 3B - 110 Chain Lake Drive, Halifax, NS B3S 1A9`;
+      const html = `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:15px;line-height:1.55;color:#1f2337">${esc(text).replace(/\n/g, "<br>")}</div>${sigHtml}`;
+      const files: any[] = (req as any).files || [];
+      const attachments = files.map((f: any) => ({ filename: f.originalname || "attachment", mimeType: f.mimetype || "application/octet-stream", data: f.buffer as Buffer }));
+      let sent: { id: string; threadId: string };
+      const sendOpts = { from: from.email, fromName: from.name, to, subject: subj, html, text: text + sigText, attachments };
+      try {
+        sent = await gmailSendAs({ ...sendOpts, threadId: prev?.threadId, inReplyTo: prev?.lastMessageIdHeader, references: prev?.lastMessageIdHeader });
+      } catch (e: any) {
+        const msg = String(e?.message || e);
+        if (prev?.threadId && /not found/i.test(msg)) {
+          // Stale/foreign thread id — send as a new thread instead of failing.
+          try { sent = await gmailSendAs(sendOpts); }
+          catch (e2: any) { console.error("[SEND-EMAIL] gmail error (retry):", e2?.message || e2); return res.status(502).json({ error: `Gmail rejected the send: ${String(e2?.message || e2).slice(0, 200)}` }); }
+        } else {
+          console.error("[SEND-EMAIL] gmail error:", msg);
+          return res.status(502).json({ error: `Gmail rejected the send: ${msg.slice(0, 200)}` });
+        }
+      }
+      const now = new Date().toISOString();
+      const attNote = attachments.length ? `\n📎 ${attachments.map((a) => a.filename).join(", ")}` : "";
+      // Capture Gmail attachment ids for our own sent message so the thread can open them later.
+      let sentAtts: { id: string; filename: string; mimeType: string; size: number }[] = [];
+      if (attachments.length) {
+        try {
+          const gm = await gmailAs(from.email);
+          const full = await gm.users.messages.get({ userId: "me", id: sent.id, format: "full" });
+          const walk2 = (part: any) => { if (!part) return; if (part.filename && part.body?.attachmentId) sentAtts.push({ id: part.body.attachmentId, filename: part.filename, mimeType: part.mimeType || "application/octet-stream", size: Number(part.body.size || 0) }); for (const c of part.parts || []) walk2(c); };
+          walk2(full.data.payload);
+        } catch (e: any) { console.error("[SEND-EMAIL] attachment lookup failed (non-fatal):", e?.message || e); }
+      }
+      const entry: any = { text: `📧 Email sent — ${subj}\n${text.slice(0, 1500)}${attNote}`, by: from.name, byUid: ctx.uid, at: now, kind: "email", direction: "outbound", from: from.email, to, subject: subj, gmailId: sent.id, gmailThreadId: sent.threadId, mailbox: from.email, attachments: sentAtts.length ? sentAtts : attachments.map((a) => ({ id: "", filename: a.filename, mimeType: a.mimeType, size: a.data.length })) };
+      if (from.repId) entry.byRepId = from.repId;
+      await leadRef.update({
+        activityLog: ctx.admin.firestore.FieldValue.arrayUnion(entry),
+        emailThread: { threadId: sent.threadId, repEmail: from.email, lastAt: now, subject: prev?.subject || subj },
+        lastAttemptAt: now, updatedAt: now,
+      });
+      res.json({ success: true, entry });
+    } catch (err: any) {
+      console.error("[SEND-EMAIL] error:", err?.message || err);
+      res.status(500).json({ error: `Failed to send email${err?.message ? ` — ${String(err.message).slice(0, 160)}` : "."}` });
+    }
+  });
+
+  // Fetch an email attachment (inbound or sent) so the thread can open/preview it.
+  app.get("/api/crm/email-attachment", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const mailbox = String(req.query.mailbox || "").toLowerCase();
+      const messageId = String(req.query.messageId || ""); const attachmentId = String(req.query.attachmentId || "");
+      const filename = String(req.query.filename || "attachment"); const mimeType = String(req.query.mimeType || "application/octet-stream");
+      if (!mailbox.endsWith("@drivevac.ca") || !messageId || !attachmentId) return res.status(400).json({ error: "Bad request." });
+      const gm = await gmailAs(mailbox);
+      const a = await gm.users.messages.attachments.get({ userId: "me", messageId, id: attachmentId });
+      const data = Buffer.from(String(a.data.data || "").replace(/-/g, "+").replace(/_/g, "/"), "base64");
+      res.setHeader("Content-Type", mimeType);
+      // Header values must be ASCII — macOS screenshots have a narrow no-break space in the name.
+      const asciiName = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\\r\n]/g, "_").trim() || "attachment";
+      const disp = /^image\//.test(mimeType) || mimeType === "application/pdf" ? "inline" : "attachment";
+      res.setHeader("Content-Disposition", `${disp}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      res.send(data);
+    } catch (err: any) {
+      console.error("[EMAIL-ATTACHMENT] error:", err?.message || err);
+      res.status(500).json({ error: "Couldn't fetch attachment." });
+    }
+  });
+
+  // On-open refresh: when a rep opens a lead that has an email thread, pull any new
+  // replies right now (instead of waiting for the 5-min sweep). Returns the new entries.
+  app.post("/api/crm/email-refresh", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { leadId } = req.body || {};
+      if (!leadId || typeof leadId !== "string") return res.status(400).json({ error: "Missing lead id." });
+      const d = await ctx.db.collection("crmLeads").doc(leadId).get();
+      if (!d.exists) return res.status(404).json({ error: "Lead not found." });
+      if (!d.get("emailThread")?.threadId) return res.json({ imported: 0, entries: [] });
+      const r = await importLeadEmails(ctx.db, ctx.admin, d);
+      res.json(r);
+    } catch (err: any) {
+      console.error("[EMAIL-REFRESH] error:", err?.message || err);
+      res.status(500).json({ error: "Refresh failed." });
+    }
+  });
+
+  // Diagnostics: can the server act as the signed-in user's mailbox? (admin only)
+  app.get("/api/crm/email-check", async (req, res) => {
+    try {
+      const ctx = await requireAdmin(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const as = String(req.query.as || ctx.email).toLowerCase();
+      const gmail = await gmailAs(as);
+      const prof = await gmail.users.getProfile({ userId: "me" });
+      res.json({ ok: true, as, emailAddress: prof.data.emailAddress, messagesTotal: prof.data.messagesTotal });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: String(e?.message || e).slice(0, 400) });
+    }
+  });
+
+  // ---- Email templates (shared, editable by all staff) -----------------------
+  // {{firstName}} {{lastName}} {{repName}} {{repPhone}} {{lookingFor}} {{budget}} get filled in on the client.
+  app.get("/api/crm/email-templates", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const snap = await ctx.db.collection("crmEmailTemplates").orderBy("name").get();
+      res.json({ templates: snap.docs.map((d: any) => ({ id: d.id, ...(d.data() || {}) })) });
+    } catch (err: any) { res.status(500).json({ error: "Failed to load templates." }); }
+  });
+  app.post("/api/crm/email-templates", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { id, name, subject, body, remove } = req.body || {};
+      const col = ctx.db.collection("crmEmailTemplates");
+      if (remove && id) { await col.doc(String(id)).delete(); return res.json({ success: true }); }
+      const nm = String(name || "").trim().slice(0, 80), sj = String(subject || "").trim().slice(0, 200), bd = String(body || "").trim().slice(0, 20000);
+      if (!nm || !sj || !bd) return res.status(400).json({ error: "Name, subject and body are all required." });
+      const now = new Date().toISOString();
+      const ref = id ? col.doc(String(id)) : col.doc();
+      const exists = id ? (await ref.get()).exists : false;
+      await ref.set({ name: nm, subject: sj, body: bd, updatedAt: now, updatedBy: ctx.name || ctx.email, ...(exists ? {} : { createdAt: now, createdBy: ctx.name || ctx.email }) }, { merge: true });
+      res.json({ success: true, id: ref.id });
+    } catch (err: any) { res.status(500).json({ error: "Failed to save template." }); }
+  });
+
+  // Free-to-Call pool: a rep claims a released lead → becomes owner, lead drops into
+  // Attempting Contact with a FRESH 3-business-day clock. The rep who lost it can't reclaim it.
+  // ---- Nurture (managers only): sleeping Lost leads with a wake-up date ----
+  const requireManager = async (req: express.Request) => {
+    const ctx = await requireStaff(req);
+    if ("error" in ctx) return ctx;
+    if (!["super_admin", "general_manager", "finance_manager"].includes(ctx.role || "") && ctx.email !== "j.jackson@drivevac.ca") return { error: 403 as const, message: "Managers only." };
+    return ctx;
+  };
+  app.get("/api/crm/nurture", async (req, res) => {
+    try {
+      const ctx = await requireManager(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const snap = await ctx.db.collection("crmLeads").where("stage", "==", "lost").get();
+      const rows = snap.docs.map((d: any) => { const l = d.data() || {}; return {
+        id: d.id, name: [l.firstName, l.lastName].filter(Boolean).join(" ") || l.title || "—", phone: l.phone || null, email: l.email || null,
+        lookingFor: l.lookingFor || null, budget: l.budget || null, city: l.city || null, province: l.province || null,
+        lostReason: l.lostReason || null, lostNote: l.lostNote || null, lostAt: l.lostAt || l.updatedAt || null, lostByName: l.lostByName || l.ownerName || null,
+        nurtureAt: l.nurtureAt || null, nurtureStatus: l.nurtureStatus || (l.nurtureAt ? "sleeping" : "dead"),
+      }; }).sort((a: any, b: any) => String(a.nurtureAt || "9999").localeCompare(String(b.nurtureAt || "9999")));
+      res.json({ rows });
+    } catch (err: any) { res.status(500).json({ error: "Failed to load nurture list." }); }
+  });
+  app.post("/api/crm/nurture", async (req, res) => {
+    try {
+      const ctx = await requireManager(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { leadId, nurtureAt, wakeNow } = req.body || {};
+      if (!leadId || typeof leadId !== "string") return res.status(400).json({ error: "Missing lead id." });
+      const ref = ctx.db.collection("crmLeads").doc(leadId);
+      const now = new Date().toISOString();
+      if (wakeNow) {
+        // Move it to the Free-to-Call pool right now (same as the tick would), so managers see it instantly.
+        const d = await ref.get();
+        if (!d.exists) return res.status(404).json({ error: "Lead not found." });
+        const reason = d.get("lostReason") || "Lost"; const lostAt = d.get("lostAt") || d.get("updatedAt");
+        const ago = lostAt ? Math.round((Date.now() - Date.parse(lostAt)) / 86_400_000) : null;
+        const agoTxt = ago == null ? "" : ago >= 60 ? ` ${Math.round(ago / 30)} months ago` : ago === 0 ? " today" : ago === 1 ? " 1 day ago" : ` ${ago} days ago`;
+        const wasWith = d.get("lostByName") || d.get("lostBy") || "";
+        await ref.update({
+          stage: "free_to_call", owner: null, ownerName: null, assignedAt: null, updatedAt: now,
+          nurtureStatus: "woken", wokenAt: now, releasedAt: now, releasedFrom: null,
+          releasedFromName: wasWith ? `${wasWith} (lost: ${reason})` : null,
+          poolNote: `⏰ Woken by ${ctx.name || ctx.email} — was Lost (${reason})${agoTxt}${wasWith ? `, by ${wasWith}` : ""}.${d.get("lostNote") ? ` “${String(d.get("lostNote")).slice(0, 160)}”` : ""} Worth another try.`,
+          stageHistory: ctx.admin.firestore.FieldValue.arrayUnion({ from: "lost", to: "free_to_call", by: ctx.email, byUid: ctx.uid, at: now }),
+          activityLog: ctx.admin.firestore.FieldValue.arrayUnion({ text: `⏰ Woken from Nurture by ${ctx.name || ctx.email} — was Lost (${reason})${agoTxt}. Back in the Free-to-Call pool.`, by: ctx.name || ctx.email, byUid: ctx.uid, at: now, kind: "note" }),
+        });
+        return res.json({ success: true, movedNow: true });
+      }
+      const nAt = nurtureAt ? new Date(String(nurtureAt)) : null;
+      await ref.update({ nurtureAt: nAt && !isNaN(nAt.getTime()) ? nAt.toISOString() : null, nurtureStatus: nAt && !isNaN(nAt.getTime()) ? "sleeping" : "dead", updatedAt: now });
+      res.json({ success: true });
+    } catch (err: any) { res.status(500).json({ error: "Failed to update nurture." }); }
+  });
+
+  // Delete a lead outright (admins only) — for junk/test/duplicate entries. Real "not now"
+  // leads should be marked Lost (→ Nurture) instead, so this is deliberately admin-gated.
+  app.post("/api/crm/lead-delete", async (req, res) => {
+    try {
+      const ctx = await requireAdmin(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { leadId } = req.body || {};
+      if (!leadId || typeof leadId !== "string") return res.status(400).json({ error: "Missing lead id." });
+      const ref = ctx.db.collection("crmLeads").doc(leadId);
+      const d = await ref.get();
+      if (!d.exists) return res.status(404).json({ error: "Lead not found." });
+      // Keep a tombstone so a deletion is auditable (who/when/what), then remove the live doc.
+      const data = d.data() || {};
+      await ctx.db.collection("crmLeadsDeleted").doc(leadId).set({ ...data, deletedAt: new Date().toISOString(), deletedBy: ctx.email });
+      await ref.delete();
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("[LEAD-DELETE] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to delete lead." });
+    }
+  });
+
+  // ---- Trade-in appraisal link for a lead --------------------------------------
+  // Generates a unique, unguessable link (/appraisal?lead=<token>) tied to the lead so
+  // the customer never has to find/type an App ID; optionally texts it to them.
+  app.post("/api/crm/trade-link", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { leadId, send } = req.body || {};
+      if (!leadId || typeof leadId !== "string") return res.status(400).json({ error: "Missing lead id." });
+      const ref = ctx.db.collection("crmLeads").doc(leadId);
+      const d = await ref.get();
+      if (!d.exists) return res.status(404).json({ error: "Lead not found." });
+      let tok = d.get("tradeToken");
+      if (!tok) { tok = crypto.randomBytes(18).toString("base64url"); await ref.update({ tradeToken: tok, tradeTokenAt: new Date().toISOString() }); }
+      const link = `https://vehicleapprovalcentre.com/appraisal?lead=${tok}`;
+      let sent = false;
+      if (send === "sms") {
+        const to = String(d.get("phone") || "").replace(/\D+/g, "");
+        const apiKey = process.env.QUO_API_KEY;
+        if (to.length < 10) return res.status(400).json({ error: "This lead has no valid phone number." });
+        if (!apiKey) return res.status(503).json({ error: "Texting isn't configured." });
+        // From the OWNING rep's line (same as the CRM text button).
+        let fromNumber = process.env.QUO_FROM_NUMBER || ""; let byName = ctx.name || ctx.email; let byRepId: string | undefined;
+        const ownerId = String(d.get("owner") || "");
+        if (ownerId) { try { const rep = await ctx.db.collection("crmReps").doc(ownerId).get(); if (rep.exists) { byRepId = rep.id; byName = rep.get("name") || byName; if (rep.get("quoNumber")) fromNumber = rep.get("quoNumber"); } } catch {} }
+        const e164 = (n: string) => { const x = String(n).replace(/\D+/g, ""); return x.length === 10 ? `+1${x}` : `+${x}`; };
+        const first = d.get("firstName") || "there";
+        const msg = `Hi ${first}, it's ${byName} at Vehicle Approval Centre. Here's your trade-in link — a few photos and details of your vehicle and we'll get you a value: ${link}`;
+        const r = await fetchWithTimeout("https://api.openphone.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", Authorization: apiKey }, body: JSON.stringify({ from: e164(fromNumber), to: [e164(to)], content: msg }) });
+        const jd: any = await r.json().catch(() => ({}));
+        if (!r.ok) return res.status(502).json({ error: (jd && (jd.message || jd.error)) || "Quo rejected the message." });
+        const now = new Date().toISOString();
+        const entry: any = { text: `💬 Text sent: ${msg}`, by: byName, byUid: ctx.uid, at: now, kind: "text", direction: "outbound", from: e164(fromNumber), to: e164(to), externalId: String(jd?.data?.id || jd?.id || ""), tradeLink: true };
+        if (byRepId) entry.byRepId = byRepId;
+        await ref.update({ activityLog: ctx.admin.firestore.FieldValue.arrayUnion(entry), lastAttemptAt: now, updatedAt: now, tradeLinkSentAt: now });
+        sent = true;
+      }
+      res.json({ success: true, link, sent });
+    } catch (err: any) {
+      console.error("[TRADE-LINK] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to create trade-in link." });
+    }
+  });
+
+  // ================= Pipedrive bulk import =================================
+  // Resumable: each call does `pages` pages and returns the next `start`, so a long
+  // import is driven as a loop of short requests (no Cloud Run timeouts).
+  //  • Leads carry the CRM_FIELDS custom-field hashes INLINE → one page = 500 full records.
+  //  • Dedupe/merge is automatic: doc id = pd_<last-10-phone-digits>, so the same person's
+  //    repeat applications land on ONE lead, each application appended to the thread.
+  //  • Everything imports UNASSIGNED into the Free-to-Call pool. Ownership for
+  //    genuinely-live work is applied separately by the "deals" phase (Aug 1 onward).
+  const IMPORT_OWNERSHIP_FROM = "2026-08-01T00:00:00Z";
+  const PD_DNC_STAGES = new Set([48, 50]);   // Opt Out, Wrong Number → never claimable
+
+  const pdFetch = async (path: string) => {
+    const token = process.env.PIPEDRIVE_API_TOKEN;
+    if (!token) throw new Error("PIPEDRIVE_API_TOKEN is not configured.");
+    const sep = path.includes("?") ? "&" : "?";
+    const r = await fetchWithTimeout(`https://api.pipedrive.com/v1${path}${sep}api_token=${token}`, {}, 30000);
+    const j: any = await r.json().catch(() => ({}));
+    if (!j?.success) throw new Error(`Pipedrive ${path}: ${j?.error || r.status}`);
+    return j;
+  };
+
+  const phoneKeyOfRaw = (p: any) => String(p ?? "").replace(/\D+/g, "").slice(-10);
+  const tokensFor = (rec: any) => {
+    const bits = [rec.firstName, rec.lastName, rec.city, rec.province, String(rec.email || "").split("@")[0]]
+      .filter(Boolean).join(" ").toLowerCase();
+    return Array.from(new Set(bits.split(/[^a-z0-9]+/).filter((t) => t.length > 1).map((t) => t.slice(0, 24)))).slice(0, 25);
+  };
+
+  app.post("/api/crm/pipedrive-import", async (req, res) => {
+    try {
+      // Admin session OR the ops secret (so a long import can be driven from a script).
+      const secret = process.env.CRM_TICK_SECRET || "";
+      const viaSecret = secret && String(req.get("x-tick-secret") || "") === secret;
+      if (!viaSecret) {
+        const ctx = await requireAdmin(req);
+        if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      }
+      const phase = String(req.body?.phase || "leads");
+      const pages = Math.min(20, Math.max(1, Number(req.body?.pages) || 4));
+      const perPage = 500;
+      let start = Number(req.body?.start) || 0;
+      const dryRun = req.body?.dryRun === true;
+      const { admin, db } = await getFirestoreAdmin();
+      const nowIso = new Date().toISOString();
+
+      if (phase === "fields") {
+        // Read Pipedrive's own field definitions so mapping is exact, never guessed.
+        const which = String(req.body?.entity || "person");
+        const j = await pdFetch(`/${which}Fields?limit=500`);
+        const out = (j.data || []).filter((f: any) => f.key && f.key.length === 40)
+          .map((f: any) => ({ key: f.key, name: f.name, type: f.field_type,
+            options: Array.isArray(f.options) ? f.options.slice(0, 12).map((o: any) => `${o.id}=${o.label}`) : undefined }));
+        return res.json({ ok: true, entity: which, count: out.length, fields: out });
+      }
+
+      if (phase === "leads") {
+        let imported = 0, merged = 0, skipped = 0, dnc = 0, more = true;
+        for (let p = 0; p < pages && more; p++) {
+          const j = await pdFetch(`/leads?limit=${perPage}&start=${start}`);
+          const items: any[] = j.data || [];
+          more = !!j?.additional_data?.pagination?.more_items_in_collection;
+          start = j?.additional_data?.pagination?.next_start ?? start + items.length;
+          if (!items.length) { more = false; break; }
+
+          let batch = db.batch(); let ops = 0;
+          for (const L of items) {
+            const rec: any = {};
+            for (const [hash, name] of Object.entries(CRM_FIELDS)) {
+              const v = (L as any)[hash];
+              if (v === undefined || v === null || v === "") continue;
+              const enums = CRM_ENUMS[hash];
+              rec[name] = enums && typeof v === "number" ? (enums[v] || String(v)) : (typeof v === "object" ? (v.value ?? null) : v);
+            }
+            if (!rec.firstName && !rec.lastName && L.title) {
+              const parts = String(L.title).trim().split(/\s+/);
+              rec.firstName = parts[0]; rec.lastName = parts.slice(1).join(" ") || null;
+            }
+            const pk = phoneKeyOfRaw(rec.phone);
+            const docId = pk.length === 10 ? `pd_${pk}` : `pl_${String(L.id).replace(/[^\w-]/g, "")}`;
+            if (!rec.firstName && !rec.lastName && !rec.email && pk.length !== 10) { skipped++; continue; }
+
+            const isDnc = PD_DNC_STAGES.has(Number(L.stage_id)) || String(L.label_ids || "").includes("opt-out");
+            if (isDnc) dnc++;
+
+            const appNote = {
+              text: `📄 Pipedrive application${rec.applicationId ? ` — ${rec.applicationId}` : ""}\n` +
+                    [`Vehicle: ${rec.lookingFor || "—"}`, `Budget: ${rec.budget || "—"}`, `Down payment: ${rec.downPayment || "—"}`,
+                     `Credit: ${rec.creditSelfRating || "—"}`, `Employment: ${rec.employmentStatus || "—"}`].join("\n"),
+              by: "Pipedrive import", at: L.add_time || nowIso, kind: "application", pipedriveLeadId: String(L.id),
+            };
+            const data: any = {
+              ...rec,
+              phoneKey: pk.length === 10 ? pk : null,
+              title: [rec.firstName, rec.lastName].filter(Boolean).join(" ") || L.title || null,
+              pipedriveLeadId: String(L.id),
+              stage: "free_to_call", owner: null, ownerName: null, assignedAt: null,
+              addTime: L.add_time || nowIso,
+              releasedAt: L.add_time || nowIso,          // pool ordering
+              source: "pipedrive-import", importedAt: nowIso,
+              searchTokens: tokensFor(rec),
+              updatedAt: nowIso,
+              ...(isDnc ? { dnc: true, dncReason: Number(L.stage_id) === 48 ? "Opt out" : "Wrong number" } : {}),
+              activityLog: admin.firestore.FieldValue.arrayUnion(appNote),
+            };
+            if (!dryRun) { batch.set(db.collection("crmLeads").doc(docId), data, { merge: true }); ops++; }
+            if (docId.startsWith("pd_")) merged++; else imported++;
+            if (ops >= 300) { await batch.commit(); batch = db.batch(); ops = 0; }
+          }
+          if (!dryRun && ops > 0) await batch.commit();
+        }
+        return res.json({ ok: true, phase, nextStart: more ? start : null, done: !more, imported, merged, skipped, dnc, dryRun });
+      }
+
+      if (phase === "deals") {
+        // Ownership for genuinely-live work: OPEN deals in the sales pipeline added since Aug 1.
+        const STAGE_MAP: Record<number, string> = { 35: "attempting_contact", 40: "dealertrack", 36: "approved", 37: "signed", 38: "signed", 39: "signed" };
+        const repsSnap = await db.collection("crmReps").get();
+        const byPdUser = new Map<string, { id: string; name: string }>();
+        repsSnap.docs.forEach((d: any) => { const pid = d.get("pipedriveOwnerId"); if (pid) byPdUser.set(String(pid), { id: d.id, name: d.get("name") || d.id }); });
+        let cursor = String(req.body?.cursor || ""); let owned = 0, unmatched = 0, older = 0, hasMore = true;
+        for (let p = 0; p < pages && hasMore; p++) {
+          const qs = `/deals?limit=${perPage}&status=open${cursor ? `&start=${cursor}` : ""}`;
+          const j = await pdFetch(qs);
+          const items: any[] = j.data || [];
+          hasMore = !!j?.additional_data?.pagination?.more_items_in_collection;
+          cursor = String(j?.additional_data?.pagination?.next_start ?? "");
+          if (!items.length) { hasMore = false; break; }
+          let batch = db.batch(); let ops = 0;
+          for (const D of items) {
+            if (Number(D.pipeline_id) !== 5) continue;
+            if (String(D.add_time || "") < IMPORT_OWNERSHIP_FROM.slice(0, 19).replace("T", " ")) { older++; continue; }
+            const cf = D.custom_fields || D;
+            const phone = cf["9902ecfb207e316c980c1264d302e7e48a86bf4a"];
+            const pk = phoneKeyOfRaw(typeof phone === "object" ? phone?.value : phone);
+            if (pk.length !== 10) { unmatched++; continue; }
+            const rep = byPdUser.get(String(D.owner_id));
+            if (!rep) { unmatched++; continue; }
+            const stage = STAGE_MAP[Number(D.stage_id)] || "attempting_contact";
+            if (!dryRun) {
+              batch.set(db.collection("crmLeads").doc(`pd_${pk}`), {
+                stage, owner: rep.id, ownerName: rep.name, assignedAt: D.add_time || nowIso,
+                attemptingSince: stage === "attempting_contact" ? (D.stage_change_time || D.add_time || nowIso) : null,
+                pipedriveDealId: String(D.id), releasedAt: null, releasedFrom: null, releasedFromName: null,
+                updatedAt: nowIso,
+                activityLog: admin.firestore.FieldValue.arrayUnion({ text: `📥 Imported from Pipedrive as an open deal — ${rep.name}.`, by: "Pipedrive import", at: nowIso, kind: "note", pipedriveDealId: String(D.id) }),
+              }, { merge: true });
+              ops++;
+            }
+            owned++;
+            if (ops >= 300) { await batch.commit(); batch = db.batch(); ops = 0; }
+          }
+          if (!dryRun && ops > 0) await batch.commit();
+        }
+        return res.json({ ok: true, phase, nextCursor: hasMore ? cursor : null, done: !hasMore, owned, unmatched, olderSkipped: older, dryRun });
+      }
+
+      return res.status(400).json({ error: "Unknown phase. Use 'leads' or 'deals'." });
+    } catch (err: any) {
+      console.error("[PD-IMPORT] error:", err?.message || err);
+      res.status(500).json({ error: String(err?.message || err).slice(0, 300) });
+    }
+  });
+
+  // ---- Free-to-Call pool: paginated + server-side search (built for 35k+ imported leads) ----
+  // Returns LIGHT rows only (no activityLog) — the drawer fetches the full lead on open.
+  app.get("/api/crm/pool", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const limit = Math.min(200, Math.max(10, Number(req.query.limit) || 50));
+      const cursor = String(req.query.cursor || "");           // last releasedAt|id from the previous page
+      const q = String(req.query.q || "").trim().toLowerCase();
+      const province = String(req.query.province || "").trim();
+      const lookingFor = String(req.query.lookingFor || "").trim();
+      const credit = String(req.query.credit || "").trim();
+
+      let ref: any = ctx.db.collection("crmLeads").where("stage", "==", "free_to_call");
+      if (province) ref = ref.where("province", "==", province);
+      if (lookingFor) ref = ref.where("lookingFor", "==", lookingFor);
+      if (credit) ref = ref.where("creditSelfRating", "==", credit);
+
+      // Search: digits → phone key; text → token match (searchTokens is written on import/save).
+      const digits = q.replace(/\D/g, "");
+      if (q && digits.length >= 7) {
+        ref = ref.where("phoneKey", "==", digits.slice(-10));
+      } else if (q) {
+        ref = ref.where("searchTokens", "array-contains", q.split(/\s+/)[0].slice(0, 24));
+      }
+
+      ref = ref.orderBy("releasedAt", "desc").limit(limit + 1);
+      if (cursor) { try { ref = ref.startAfter(new Date(cursor).toISOString()); } catch {} }
+
+      const snap = await ref.get();
+      const docs = snap.docs.slice(0, limit);
+      const rows = docs
+        .filter((d: any) => d.get("dnc") !== true)      // Opt Out / Wrong Number never appear in the claimable pool
+        .map((d: any) => ({
+          id: d.id,
+          firstName: d.get("firstName") || null, lastName: d.get("lastName") || null, title: d.get("title") || null,
+          phone: d.get("phone") || null, email: d.get("email") || null,
+          city: d.get("city") || null, province: d.get("province") || null,
+          lookingFor: d.get("lookingFor") || null, budget: d.get("budget") || null,
+          creditSelfRating: d.get("creditSelfRating") || null,
+          releasedAt: d.get("releasedAt") || d.get("addTime") || null,
+          releasedFrom: d.get("releasedFrom") || null, releasedFromName: d.get("releasedFromName") || null,
+          releaseStats: d.get("releaseStats") || null, poolNote: d.get("poolNote") || null,
+          addTime: d.get("addTime") || null, source: d.get("source") || null,
+        }));
+      const last = docs[docs.length - 1];
+      res.json({
+        rows,
+        nextCursor: snap.docs.length > limit && last ? (last.get("releasedAt") || last.get("addTime") || null) : null,
+        hasMore: snap.docs.length > limit,
+      });
+    } catch (err: any) {
+      console.error("[CRM-POOL] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to load the pool.", detail: String(err?.message || err).slice(0, 200) });
+    }
+  });
+
+  // One full lead (with thread) — used when opening a pool/nurture lead in the drawer.
+  app.get("/api/crm/lead", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const id = String(req.query.id || "");
+      if (!id) return res.status(400).json({ error: "Missing id." });
+      const d = await ctx.db.collection("crmLeads").doc(id).get();
+      if (!d.exists) return res.status(404).json({ error: "Lead not found." });
+      res.json({ lead: { id: d.id, ...(d.data() || {}) } });
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to load lead." });
+    }
+  });
+
+  // Public: resolve a trade-in token → who the customer is (name only, for the appraisal page greeting).
+  app.get("/api/appraisal/lead", async (req, res) => {
+    if (!rateLimit(`trade-lookup:${clientIp(req)}`, 60, 10 * 60 * 1000)) return res.status(429).json({ error: "Too many attempts." });
+    const tok = String(req.query.lead || "").trim();
+    if (!tok || tok.length < 10 || tok.length > 64) return res.status(400).json({ found: false });
+    try {
+      const { db } = await getFirestoreAdmin();
+      const q = await db.collection("crmLeads").where("tradeToken", "==", tok).limit(1).get();
+      if (q.empty) return res.json({ found: false });
+      const d = q.docs[0];
+      res.json({ found: true, firstName: d.get("firstName") || "", lastName: (d.get("lastName") || "").slice(0, 1), rep: d.get("ownerName") || null, hasTradeIn: d.get("hasTradeIn") || null });
+    } catch (e: any) { res.json({ found: null }); }
+  });
+
+  app.post("/api/crm/claim", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { leadId, repId } = req.body || {};
+      if (!leadId || typeof leadId !== "string") return res.status(400).json({ error: "Missing lead id." });
+      const ref = ctx.db.collection("crmLeads").doc(leadId);
+      const d = await ref.get();
+      if (!d.exists) return res.status(404).json({ error: "Lead not found." });
+      if (d.get("stage") !== "free_to_call") return res.status(409).json({ error: "This lead isn't in the Free-to-Call pool any more." });
+      // Who's claiming: admins may pick a rep; reps claim for themselves.
+      let rep: any = null;
+      if (repId && ctx.role !== "sales_rep") { const r = await ctx.db.collection("crmReps").doc(String(repId)).get(); if (r.exists) rep = { id: r.id, name: r.get("name") }; }
+      if (!rep) { const mine = await ctx.db.collection("crmReps").where("uid", "==", ctx.uid).limit(1).get(); if (!mine.empty) rep = { id: mine.docs[0].id, name: mine.docs[0].get("name") }; }
+      if (!rep) return res.status(400).json({ error: "Your login isn't linked to a rep record yet." });
+      if (d.get("releasedFrom") === rep.id) return res.status(403).json({ error: "You had this lead already — it's in the pool so someone else can try." });
+      const now = new Date().toISOString();
+      await ref.update({
+        stage: "attempting_contact", owner: rep.id, ownerName: rep.name || null, assignedAt: now, updatedAt: now,
+        attemptingSince: now, lastAttemptAt: now,                        // fresh 3-business-day clock for the new rep
+        claimedAt: now, claimedBy: rep.id, poolClaims: ctx.admin.firestore.FieldValue.increment(1),
+        stageHistory: ctx.admin.firestore.FieldValue.arrayUnion({ from: "free_to_call", to: "attempting_contact", by: ctx.email, byUid: ctx.uid, at: now }),
+        activityLog: ctx.admin.firestore.FieldValue.arrayUnion({ text: `♻️ Claimed from the Free-to-Call pool by ${rep.name || ctx.email} — 3 business days to make contact.`, by: rep.name || ctx.email, byUid: ctx.uid, byRepId: rep.id, at: now, kind: "note" }),
+      });
+      try { await ctx.db.collection("crmReps").doc(rep.id).update({ lastAssignedAt: now }); } catch {}
+      res.json({ success: true, owner: rep.id, ownerName: rep.name || null });
+    } catch (err: any) {
+      console.error("[CRM-CLAIM] error:", err?.message || err);
+      res.status(500).json({ error: "Failed to claim lead." });
+    }
+  });
+
+  app.post("/api/crm/send-text", async (req, res) => {
+    try {
+      const ctx = await requireStaff(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { leadId, text, mediaUrls } = req.body || {};
+      if (!leadId || typeof leadId !== "string") return res.status(400).json({ error: "Missing lead id." });
+      const msg = String(text || "").trim();
+      // Photos ride along as MMS — https URLs only (Quo fetches them), max 5.
+      const media: string[] = Array.isArray(mediaUrls)
+        ? mediaUrls.filter((u: any) => typeof u === "string" && /^https:\/\//.test(u)).slice(0, 5)
+        : [];
+      if (!msg && media.length === 0) return res.status(400).json({ error: "Message is empty." });
+      const apiKey = process.env.QUO_API_KEY;
+      if (!apiKey) return res.status(503).json({ error: "Texting isn't configured yet (QUO_API_KEY not set)." });
+
+      const leadRef = ctx.db.collection("crmLeads").doc(leadId);
+      const leadSnap = await leadRef.get();
+      if (!leadSnap.exists) return res.status(404).json({ error: "Lead not found." });
+      const to = String(leadSnap.get("phone") || "").trim();
+      if (!to) return res.status(400).json({ error: "This lead has no phone number." });
+
+      // Send from the OWNING rep's own Quo line (so replies stay with them). Reps
+      // without a Quo number fall back to the shared line.
+      let fromNumber = process.env.QUO_FROM_NUMBER || "";
+      let byName = ctx.name || ctx.email; let byRepId: string | undefined;
+      const ownerId = String(leadSnap.get("owner") || "");
+      if (ownerId) {
+        try {
+          const rep = await ctx.db.collection("crmReps").doc(ownerId).get();
+          if (rep.exists) { byRepId = rep.id; byName = rep.get("name") || byName; if (rep.get("quoNumber")) fromNumber = rep.get("quoNumber"); }
+        } catch {}
+      }
+      if (!fromNumber) return res.status(503).json({ error: "No Quo number to send from (QUO_FROM_NUMBER not set and rep has no line)." });
+
+      // OpenPhone needs E.164 (+17828305313) — normalize however the number was typed.
+      const toE164 = (n: string) => { const d = String(n).replace(/\D+/g, ""); return d.length === 10 ? `+1${d}` : d.length === 11 && d.startsWith("1") ? `+${d}` : d ? `+${d}` : ""; };
+      fromNumber = toE164(fromNumber);
+      const toNum = toE164(to);
+      if (!toNum || toNum.length < 12) return res.status(400).json({ error: `Customer phone "${to}" isn't a valid number.` });
+
+      // OpenPhone send API — auth is the raw API key in the Authorization header.
+      // OpenPhone rejects blank content — for a photo-only send, omit it (media carries the message).
+      const payload: any = { from: fromNumber, to: [toNum] };
+      if (msg) payload.content = msg;
+      if (media.length) payload.mediaUrls = media;
+      const r = await fetchWithTimeout("https://api.openphone.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: apiKey },
+        body: JSON.stringify(payload),
+      });
+      const jd: any = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        console.error("[SEND-TEXT] OpenPhone error:", r.status, jd);
+        return res.status(502).json({ error: (jd && (jd.message || jd.error)) || "Quo rejected the message." });
+      }
+      const msgId = jd?.data?.id || jd?.id || "";
+      const now = new Date().toISOString();
+      const entry: any = {
+        text: msg ? `💬 Text sent: ${msg.slice(0, 1000)}` : `💬 Photo sent`, by: byName, at: now,
+        kind: "text", direction: "outbound", from: fromNumber, to, externalId: String(msgId),
+      };
+      if (media.length) entry.media = media;
+      if (byRepId) entry.byRepId = byRepId;
+      await leadRef.update({
+        activityLog: ctx.admin.firestore.FieldValue.arrayUnion(entry),
+        lastAttemptAt: now, updatedAt: now,
+      });
+      res.json({ success: true, entry });
+    } catch (err: any) {
+      console.error("[SEND-TEXT] error:", err?.message || err);
+      res.status(500).json({ error: `Failed to send text${err?.message ? ` — ${String(err.message).slice(0, 160)}` : "."}` });
+    }
+  });
+  // ===================================================================
 
   app.get("/api/health", async (req, res) => {
     let pipedriveStatus = "untested";

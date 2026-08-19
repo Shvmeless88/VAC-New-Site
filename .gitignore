@@ -8,3 +8,6 @@ coverage/
 
 # Claude Code local config
 .claude/
+
+# Build output (deployed via Cloud Run build, not committed)
+dist/

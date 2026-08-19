@@ -1,4 +1,5 @@
 import { calculateBiWeeklyPayment, cn, getVehicleUrl } from '@/lib/utils';
+import { sirvResize, sirvSrcSet } from '@/lib/imageUrl';
 import * as React from 'react';
 import { Car } from '@/types';
 import { Card } from '@/components/ui/card';
@@ -54,10 +55,17 @@ export default React.memo(function CarCard({ car, hideSoldDate = false }: CarCar
           {/* Image Section - 16:9 */}
           <div className="relative aspect-video overflow-hidden bg-gray-100 flex justify-center items-center">
             {/* Main Image */}
+            {/* Sirv resizes on the fly, so ask for the size we actually render.
+                The card is ~308px on a phone — shipping the 1920px original was
+                ~6x more pixels across than the screen can show. */}
             <img
-              src={car.images?.[0] || 'https://picsum.photos/seed/car/800/600'}
+              src={sirvResize(car.images?.[0], 800) || 'https://picsum.photos/seed/car/800/600'}
+              srcSet={sirvSrcSet(car.images?.[0])}
+              sizes="(max-width: 768px) 100vw, 400px"
               alt={`${car.year} ${car.make} ${car.model}`}
               className="object-cover w-full h-full"
+              loading="lazy"
+              decoding="async"
               referrerPolicy="no-referrer"
             />
 
@@ -115,6 +123,22 @@ export default React.memo(function CarCard({ car, hideSoldDate = false }: CarCar
                   <span className="text-sm font-bold text-[#64748B]">
                     ${(car.price || 0).toLocaleString()}
                   </span>
+                  {/* Market-position badge — only shown for competitive prices.
+                      "High Price" is never surfaced publicly (it would tell a
+                      shopper the car is overpriced). */}
+                  {car.marketPriceRating && car.marketPriceRating !== 'High Price' && (
+                    <span className={cn(
+                      "inline-flex items-center gap-1 mt-1 w-fit rounded-md px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+                      car.marketPriceRating.includes('Great') || car.marketPriceRating.includes('Good')
+                        ? "bg-blue-50 text-blue-700"
+                        : "bg-slate-100 text-slate-500"
+                    )}>
+                      {(car.marketPriceRating.includes('Great') || car.marketPriceRating.includes('Good')) && '↓ '}
+                      {typeof car.marketPriceDifference === 'number' && car.marketPriceDifference > 0
+                        ? `${car.marketPriceRating} · $${car.marketPriceDifference.toLocaleString()} below market`
+                        : car.marketPriceRating}
+                    </span>
+                  )}
                 </>
               )}
             </div>

@@ -20,7 +20,9 @@ export interface Car {
   isClearance?: boolean;
   biWeekly?: number;
   marketPriceRating?: 'Great Price' | 'Good Price' | 'Fair Price' | 'High Price';
-  marketPriceDifference?: number;
+  marketPriceDifference?: number; // + = priced below the market median
+  marketSampleSize?: number;      // how many comparable CA listings the rating is based on
+  marketMedian?: number;          // median asking price of those comps
   sirvUrl?: string;
   interior360Photo?: string;
   interior360Url?: string;

@@ -172,14 +172,14 @@ export default function CarLoanCalculator({ car, initialPrice = 24995 }: { car?:
     return `/financing?${params.toString()}`;
   };
 
-  // Progress bar calculation
-  const progress = Math.min((biWeeklyPayment / 800) * 100, 100);
+  // Monthly equivalent — most shoppers budget in $/month, not bi-weekly.
+  const monthlyEquivalent = Math.round((biWeeklyPayment * 26) / 12);
 
   return (
-    <div className="w-full max-w-6xl mx-auto py-16 px-4 sm:px-6 lg:px-8">
-      <div className="flex flex-col lg:flex-row gap-12 items-start">
+    <div className="w-full max-w-6xl mx-auto py-12 md:py-16 px-4 sm:px-6 lg:px-8">
+      <div className="flex flex-col lg:flex-row gap-8 lg:gap-12 items-start">
         {/* Left Column: Inputs */}
-        <div className="flex-1 space-y-8 w-full">
+        <div className="flex-1 space-y-6 w-full">
           <div>
             <div className="inline-flex items-center gap-2 px-3 py-1 bg-brand-secondary/10 rounded-full mb-4">
               <div className="h-1.5 w-1.5 rounded-full bg-brand-secondary" />
@@ -189,7 +189,7 @@ export default function CarLoanCalculator({ car, initialPrice = 24995 }: { car?:
             <p className="text-slate-500 font-medium text-lg leading-relaxed max-w-xl">Adjust the parameters below to see your estimated bi-weekly payment in real-time.</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-2 gap-3 md:gap-6">
             <FloatingLabelInput 
               label="Vehicle Price"
               value={price}
@@ -252,19 +252,15 @@ export default function CarLoanCalculator({ car, initialPrice = 24995 }: { car?:
                 <div className="text-brand-secondary font-black uppercase tracking-[0.3em] text-xs mt-3 md:mt-4">bi-weekly</div>
               </div>
 
-              {/* Dynamic Visualizer */}
-              <div className="w-full mb-8 md:mb-12">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Loan Progress</span>
-                  <span className="text-[10px] font-black tracking-widest text-brand-secondary">{Math.round(progress)}%</span>
+              {/* Payment breakdown — real, useful context instead of a vanity bar */}
+              <div className="w-full mb-8 md:mb-12 grid grid-cols-2 divide-x divide-white/10 rounded-2xl bg-white/5 border border-white/10 overflow-hidden">
+                <div className="py-4 px-3 text-center">
+                  <div className="text-xl md:text-2xl font-display font-black text-white leading-none">≈ ${monthlyEquivalent.toLocaleString()}</div>
+                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40 mt-2">Per Month</div>
                 </div>
-                <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden p-0.5 border border-white/5">
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${progress}%` }}
-                    className="h-full bg-brand-secondary rounded-full shadow-[0_0_15px_rgba(115,128,255,0.6)]"
-                    transition={{ type: "spring", bounce: 0, duration: 1.2 }}
-                  />
+                <div className="py-4 px-3 text-center">
+                  <div className="text-xl md:text-2xl font-display font-black text-white leading-none">{termMonths} mo</div>
+                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40 mt-2">Term</div>
                 </div>
               </div>
 

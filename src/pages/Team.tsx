@@ -278,7 +278,7 @@ export default function Team() {
             </p>
             <div className="flex flex-col sm:flex-row justify-center gap-4">
               <Button asChild size="lg" className="bg-[#41456B] hover:bg-[#2d304b] text-white font-bold px-10 rounded-2xl h-16 text-lg shadow-xl shadow-black/10">
-                <Link to="/financing">Apply for Financing</Link>
+                <Link to="/apply-now">Apply for Financing</Link>
               </Button>
               <Button asChild size="lg" className="bg-transparent border-2 border-white text-white hover:bg-white hover:text-brand-secondary font-bold px-10 rounded-2xl h-16 text-lg transition-all duration-300">
                 <Link to="/inventory">Browse Inventory</Link>

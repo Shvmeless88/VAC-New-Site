@@ -102,7 +102,16 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if isOwner(userId) || isAdmin() || (isSignedIn());
       allow list: if true; // Needed for public round robin assignment
-      allow create: if isOwner(userId) || isAdmin();
+      // A non-admin may ONLY self-create a plain 'user' profile, or the exact role
+      // named in a pending invitation for their own email. This stops a signed-in
+      // customer from self-granting an admin/staff role (which isAdmin()/isStaff()
+      // would otherwise trust) — critical now that customers can sign in.
+      allow create: if isAdmin()
+        || (isOwner(userId) && request.resource.data.get('role', 'user') == 'user')
+        || (isOwner(userId)
+            && exists(/databases/$(database)/documents/invitations/$(request.auth.token.email))
+            && get(/databases/$(database)/documents/invitations/$(request.auth.token.email)).data.status == 'pending'
+            && get(/databases/$(database)/documents/invitations/$(request.auth.token.email)).data.role == request.resource.data.get('role', 'user'));
       allow update: if isAdmin() || 
                       (isOwner(userId) && !incoming().diff(existing()).affectedKeys().hasAny(['role'])) ||
                       (incoming().diff(existing()).affectedKeys().hasOnly(['leadsReceivedCount', 'lastAssignedTimestamp', 'updatedAt', 'isClockedIn', 'lastShiftToggle'])); 

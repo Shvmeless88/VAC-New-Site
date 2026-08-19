@@ -6,6 +6,7 @@ import { useInventory } from '@/hooks/useInventory';
 import { useSoldStories } from '@/hooks/useSoldStories';
 import CarCard from '@/components/inventory/CarCard';
 import CarLoanCalculator from '@/components/calculator/CarLoanCalculator';
+import MobileCTABar from '@/components/layout/MobileCTABar';
 import { motion } from 'motion/react';
 import { db, collection, query, orderBy, limit, onSnapshot, storage, ref, getDownloadURL, addDoc, Timestamp, handleFirestoreError, OperationType } from '@/lib/firebase';
 import React, { useState, useEffect } from 'react';
@@ -90,15 +91,6 @@ export default function Home() {
   const { inventory, loading } = useInventory();
   const navigate = useNavigate();
 
-  const recentlySold = inventory
-    .filter(car => car.status === 'Sold')
-    .sort((a, b) => {
-      const aDate = a.soldAt?.toMillis ? a.soldAt.toMillis() : (a.soldAt ? new Date(a.soldAt).getTime() : 0);
-      const bDate = b.soldAt?.toMillis ? b.soldAt.toMillis() : (b.soldAt ? new Date(b.soldAt).getTime() : 0);
-      return bDate - aDate;
-    })
-    .slice(0, 10);
-
   useEffect(() => {
     const fetchHeroImage = async () => {
       try {
@@ -129,14 +121,12 @@ export default function Home() {
   const [activeSlide, setActiveSlide] = useState(0);
   const [activeDeliverySlide, setActiveDeliverySlide] = useState(0);
   const [activeTestimonialSlide, setActiveTestimonialSlide] = useState(0);
-  const [activeRecentlySoldSlide, setActiveRecentlySoldSlide] = useState(0);
   const carouselRef = React.useRef<HTMLDivElement>(null);
   const deliveriesCarouselRef = React.useRef<HTMLDivElement>(null);
   const testimonialsCarouselRef = React.useRef<HTMLDivElement>(null);
   const cardRefs = React.useRef<(HTMLDivElement | null)[]>([]);
   const deliveriesCardRefs = React.useRef<(HTMLDivElement | null)[]>([]);
   const testimonialsCardRefs = React.useRef<(HTMLDivElement | null)[]>([]);
-  const recentlySoldCardRefs = React.useRef<(HTMLDivElement | null)[]>([]);
   const featuredCars = inventory.filter(car => car.isFeatured).slice(0, 3);
 
   useEffect(() => {
@@ -199,32 +189,13 @@ export default function Home() {
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            const index = parseInt(entry.target.getAttribute('data-index') || '0');
-            setActiveRecentlySoldSlide(index);
-          }
-        });
-      },
-      { threshold: 0.5 }
-    );
-
-    recentlySoldCardRefs.current.forEach((ref) => {
-      if (ref) observer.observe(ref);
-    });
-
-    return () => observer.disconnect();
-  }, [recentlySold]);
-
   return (
     <div className="flex flex-col min-h-screen pt-14 md:pt-16">
+      <MobileCTABar />
       {/* Hero Section - Professional, Financing First */}
-      <section className="min-h-[80vh] flex flex-col lg:flex-row bg-white relative overflow-hidden">
+      <section className="lg:min-h-[80vh] flex flex-col lg:flex-row bg-white relative overflow-hidden">
         {/* Left Column - Text and CTA */}
-        <div className="flex-1 flex items-center justify-center py-12 lg:py-24 px-6 md:px-16 lg:px-24 z-10">
+        <div className="flex-1 flex items-center justify-center pt-8 pb-6 lg:py-24 px-6 md:px-16 lg:px-24 z-10">
           <motion.div
             initial={{ opacity: 0, x: -30 }}
             animate={{ opacity: 1, x: 0 }}
@@ -233,23 +204,41 @@ export default function Home() {
           >
             <div className="hidden md:inline-flex items-center space-x-1.5 bg-white px-4 py-1.5 rounded-full mb-6 border border-brand-accent/20 shadow-sm">
               <CheckCircle className="h-4 w-4 text-brand-accent" />
-              <span className="text-xs font-bold text-brand-accent uppercase tracking-wider">100% ONLINE • FAST & PROTECTED</span>
+              <span className="text-xs font-bold text-brand-accent uppercase tracking-wider">Instant Decision • Rates from 6.99% O.A.C.</span>
             </div>
-            <h1 className="text-4xl md:text-5xl lg:text-7xl font-display font-black text-brand-primary leading-[1.1] mb-8 tracking-tighter">
-              Your Next Vehicle, <span className="text-brand-secondary">Delivered to Your Door.</span>
+            <h1 className="text-4xl md:text-5xl lg:text-7xl font-display font-black text-brand-primary leading-[1.05] mb-4 md:mb-8 tracking-tighter">
+              Get approved in minutes. <span className="text-brand-secondary">Delivered to your door.</span>
             </h1>
-            <div className="mb-12">
-              <p className="text-slate-600 text-lg max-w-2xl">
-                <span className="font-bold">Skip the dealership.</span> Buy online. <span className="text-[#45556c] font-normal">We deliver anywhere in Atlantic Canada.</span>
+            <div className="mb-6 md:mb-8">
+              <p className="text-slate-600 text-base md:text-lg max-w-2xl leading-relaxed">
+                Apply in about 60 seconds — <span className="font-bold text-slate-800">no obligation, rates from 6.99% O.A.C.</span> We work with every credit situation, right across Atlantic Canada.
               </p>
             </div>
-            <div className="flex flex-col gap-4 mb-12">
+            <div className="flex flex-col gap-3 mb-6">
               <Button asChild variant="brand" size="xl" className="w-full">
-                <Link to="/financing">Get Pre-Approved</Link>
+                <Link to="/apply-now">Get Pre-Approved</Link>
               </Button>
+              <p className="text-center text-xs text-slate-400">⚡ 60-second form · no obligation</p>
               <Button asChild variant="outline" size="xl" className="w-full border-brand-accent text-brand-accent hover:bg-brand-accent hover:text-white">
                 <Link to="/inventory">Browse Inventory</Link>
               </Button>
+            </div>
+
+            {/* Social proof, right next to the CTA */}
+            <div className="flex items-center gap-2 mb-6 text-sm text-slate-500">
+              <span className="text-amber-400 tracking-wide text-base">★★★★<span className="text-slate-300">★</span></span>
+              <span className="font-bold text-brand-primary">4.5</span>
+              <span>from 416 Google reviews</span>
+            </div>
+
+            {/* Trust chips */}
+            <div className="flex flex-wrap gap-2 mb-4 md:mb-12">
+              {['Rates from 6.99% O.A.C.', 'Every credit situation', 'No obligation', '150-point inspected'].map((t) => (
+                <span key={t} className="inline-flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 border border-slate-100 px-3 py-1.5 rounded-lg">
+                  <CheckCircle className="h-3.5 w-3.5 text-green-500" />
+                  {t}
+                </span>
+              ))}
             </div>
           </motion.div>
         </div>
@@ -366,7 +355,7 @@ export default function Home() {
                 Our scouts have access to thousands of off-market vehicles across Atlantic Canada. Tell us your dream car, and we'll find it.
               </p>
               <Button asChild variant="brand" size="lg" className="rounded-xl">
-                <Link to="/financing">Get Pre-Approved</Link>
+                <Link to="/apply-now">Get Pre-Approved</Link>
               </Button>
             </div>
           )}
@@ -537,67 +526,70 @@ export default function Home() {
               </Link>
             </Button>
           </div>
-        </div>
-      </section>
 
-      {/* Recently Sold Section */}
-      {recentlySold.length > 0 && (
-        <section className="py-24 bg-brand-bg/30 border-t border-gray-100">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-16 gap-6">
-              <div className="max-w-2xl w-full">
-                <h2 className="text-4xl md:text-5xl font-display font-bold text-brand-primary tracking-tight mb-4">
-                  Recently Sold
-                </h2>
-                <p className="text-gray-500 text-lg">
-                  See what our customers are driving home today.
-                </p>
+          {/* Reviews — folded in from the old standalone "Customer Experiences" section */}
+          <div className="mt-14 md:mt-24 pt-14 md:pt-24 border-t border-gray-100">
+            <div className="text-center mb-10 md:mb-16">
+              <div className="flex justify-center text-[#7380FF] mb-4 space-x-1">
+                {[1, 2, 3, 4].map((i) => <Star key={i} className="h-5 w-5 md:h-6 md:w-6 fill-current" />)}
+                <StarHalf className="h-5 w-5 md:h-6 md:w-6 fill-current" />
               </div>
-              <Button asChild variant="outline" className="hidden border-brand-accent text-brand-accent hover:bg-brand-accent hover:text-white font-bold md:flex text-base p-6 transition-colors rounded-xl">
-                <Link to="/inventory">
-                  View All Inventory <ChevronRight className="ml-2 h-5 w-5" />
-                </Link>
-              </Button>
+              <p className="text-gray-400 font-bold uppercase tracking-[0.2em] text-xs">Rated 4.5/5 · 416 Google reviews</p>
             </div>
-            
-            <div className="flex md:grid md:grid-cols-3 gap-4 md:gap-8 overflow-x-auto snap-x snap-mandatory [&::-webkit-scrollbar]:hidden pb-8 px-4 md:px-0">
-              {recentlySold.slice(0, 3).map((car, index) => (
-                <motion.div 
-                  initial={{ opacity: 0, y: 30 }}
+
+            <div
+              ref={testimonialsCarouselRef}
+              className="flex md:grid md:grid-cols-3 gap-4 md:gap-10 overflow-x-auto snap-x snap-mandatory [&::-webkit-scrollbar]:hidden pb-8 px-4 md:px-0"
+            >
+              {[
+                {
+                  name: "Jennifer L.",
+                  location: "Halifax, NS",
+                  text: "The best car buying experience I've ever had. No pressure, completely online, and they delivered my new SUV right to my door. Highly recommend VAC!",
+                },
+                {
+                  name: "Mark T.",
+                  location: "Moncton, NB",
+                  text: "I was worried about my credit, but VAC got me approved in minutes. The process was transparent and the car is in perfect condition.",
+                },
+                {
+                  name: "Robert S.",
+                  location: "St. John's, NL",
+                  text: "Incredible service. I did everything from my phone. The VAC warranty gave me the confidence to buy without seeing it in person first.",
+                },
+              ].map((review, i) => (
+                <motion.div
+                  key={i}
+                  ref={(el) => { testimonialsCardRefs.current[i] = el; }}
+                  data-index={i}
+                  initial={{ opacity: 0, y: 20 }}
                   whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: "-50px" }}
-                  transition={{ duration: 0.6, delay: index * 0.1, ease: "easeOut" }}
-                  key={car.id} 
-                  ref={(el) => { recentlySoldCardRefs.current[index] = el; }}
-                  data-index={index}
-                  className="w-[calc(100vw-56px)] md:w-full flex-shrink-0 snap-center px-1"
+                  viewport={{ once: true }}
+                  transition={{ duration: 0.5, delay: i * 0.1 }}
+                  className="w-[calc(100vw-56px)] md:w-full flex-shrink-0 snap-center p-8 md:p-12 rounded-[2.5rem] bg-white border border-gray-100 shadow-sm hover:shadow-xl transition-all duration-500"
                 >
-                  <CarCard car={car} hideSoldDate={true} />
+                  <p className="text-gray-500 italic mb-10 leading-relaxed text-lg">"{review.text}"</p>
+                  <div>
+                    <p className="font-bold text-brand-primary uppercase tracking-widest text-sm mb-1">{review.name}</p>
+                    <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">{review.location}</p>
+                  </div>
                 </motion.div>
               ))}
             </div>
-            
-            <div className="flex flex-col items-center gap-6 md:hidden">
-              <div className="flex justify-center gap-2">
-                {recentlySold.slice(0, 3).map((_, index) => (
-                  <div 
-                    key={index}
-                    className={cn(
-                      "h-2 rounded-full transition-all duration-300",
-                      index === activeRecentlySoldSlide ? "w-6 bg-[#41456B]" : "w-2 bg-gray-300"
-                    )}
-                  />
-                ))}
-              </div>
-              <Button asChild variant="outline" className="w-full mt-6 h-12 md:h-14 font-bold border-brand-primary/20 text-brand-primary hover:bg-brand-primary/5 hover:text-brand-primary transition-all">
-                <Link to="/inventory" className="flex items-center justify-center">
-                  View All Inventory
-                </Link>
-              </Button>
+            <div className="flex justify-center gap-2 md:hidden">
+              {[0, 1, 2].map((index) => (
+                <div
+                  key={index}
+                  className={cn(
+                    "h-2 rounded-full transition-all duration-300",
+                    index === activeTestimonialSlide ? "w-6 bg-brand-primary" : "w-2 bg-gray-300"
+                  )}
+                />
+              ))}
             </div>
           </div>
-        </section>
-      )}
+        </div>
+      </section>
 
       {/* Payment Calculator */}
       <section className="bg-white border-t border-gray-100">
@@ -606,9 +598,9 @@ export default function Home() {
 
 
       {/* How it Works - The 3-Step Process */}
-      <section className="py-24 bg-white">
+      <section className="py-14 md:py-24 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-24">
+          <div className="text-center mb-12 md:mb-24">
             <h2 className="text-4xl md:text-6xl font-display font-bold text-brand-primary mb-6">How It Works</h2>
             <p className="text-gray-500 text-xl max-w-2xl mx-auto">
               Shop first or Apply first. We've reimagined the car buying experience to be completely online and transparent.
@@ -639,7 +631,7 @@ export default function Home() {
 
           <div className="mt-16 text-center">
             <Button asChild size="lg" className="bg-[#7380FF] hover:bg-[#7380FF]/90 text-white px-12 py-8 text-xl font-bold rounded-xl">
-              <Link to="/financing">Start Your Online Application</Link>
+              <Link to="/apply-now">Get Pre-Approved</Link>
             </Button>
           </div>
         </div>
@@ -651,7 +643,7 @@ export default function Home() {
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true }}
         transition={{ duration: 0.8, ease: "easeOut" }}
-        className="py-24 bg-white"
+        className="py-14 md:py-24 bg-white"
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <h2 className="text-4xl md:text-6xl font-display font-bold text-brand-primary text-center mb-20">
@@ -660,97 +652,31 @@ export default function Home() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
             <div className="bg-white p-10 rounded-[2.5rem] shadow-sm border border-gray-100 hover:shadow-xl transition-all duration-500 group">
               <div className="h-16 w-16 bg-[#7380FF]/5 rounded-2xl flex items-center justify-center mb-8 group-hover:bg-[#7380FF] group-hover:text-white transition-all duration-500">
-                <CheckCircle className="h-8 w-8 text-[#7380FF] group-hover:text-white" />
-              </div>
-              <h3 className="text-2xl font-bold text-brand-primary mb-4">150-Point Inspection</h3>
-              <p className="text-gray-500 text-lg leading-relaxed">Every vehicle is strictly vetted by our certified technicians to ensure peak performance.</p>
-            </div>
-            <div className="bg-white p-10 rounded-[2.5rem] shadow-sm border border-gray-100 hover:shadow-xl transition-all duration-500 group">
-              <div className="h-16 w-16 bg-[#7380FF]/5 rounded-2xl flex items-center justify-center mb-8 group-hover:bg-[#7380FF] group-hover:text-white transition-all duration-500">
                 <ShieldCheck className="h-8 w-8 text-[#7380FF] group-hover:text-white" />
               </div>
-              <h3 className="text-2xl font-bold text-brand-primary mb-4">VAC Warranty</h3>
-              <p className="text-gray-500 text-lg leading-relaxed">Drive with confidence knowing your vehicle is backed by a comprehensive warranty.</p>
+              <h3 className="text-2xl font-bold text-brand-primary mb-4">VAC Warranty Included</h3>
+              <p className="text-gray-500 text-lg leading-relaxed">Every vehicle is backed by a comprehensive warranty — drive off with total confidence, not fingers crossed.</p>
             </div>
             <div className="bg-white p-10 rounded-[2.5rem] shadow-sm border border-gray-100 hover:shadow-xl transition-all duration-500 group">
               <div className="h-16 w-16 bg-[#7380FF]/5 rounded-2xl flex items-center justify-center mb-8 group-hover:bg-[#7380FF] group-hover:text-white transition-all duration-500">
-                <RotateCw className="h-8 w-8 text-[#7380FF] group-hover:text-white" />
+                <Truck className="h-8 w-8 text-[#7380FF] group-hover:text-white" />
               </div>
-              <h3 className="text-2xl font-bold text-brand-primary mb-4">360° Virtual Tours</h3>
-              <p className="text-gray-500 text-lg leading-relaxed">Experience total visual transparency. Our high-definition 360° walkarounds allow you to inspect every detail of our vehicles from any device.</p>
+              <h3 className="text-2xl font-bold text-brand-primary mb-4">Delivered to Your Door</h3>
+              <p className="text-gray-500 text-lg leading-relaxed">We bring your vehicle to you anywhere in Nova Scotia, New Brunswick, PEI, and Newfoundland — no dealership visit required.</p>
+            </div>
+            <div className="bg-white p-10 rounded-[2.5rem] shadow-sm border border-gray-100 hover:shadow-xl transition-all duration-500 group">
+              <div className="h-16 w-16 bg-[#7380FF]/5 rounded-2xl flex items-center justify-center mb-8 group-hover:bg-[#7380FF] group-hover:text-white transition-all duration-500">
+                <TrendingUp className="h-8 w-8 text-[#7380FF] group-hover:text-white" />
+              </div>
+              <h3 className="text-2xl font-bold text-brand-primary mb-4">Transparent Pricing</h3>
+              <p className="text-gray-500 text-lg leading-relaxed">Real market-checked prices and clear bi-weekly payments up front. No haggling, no surprise fees at the finish line.</p>
             </div>
           </div>
         </div>
       </motion.section>
 
-      {/* Testimonials / Trust Signals */}
-      <section className="py-24 bg-white border-t border-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-20">
-            <h2 className="text-4xl md:text-6xl font-display font-bold text-brand-primary mb-6">Customer Experiences</h2>
-            <div className="flex justify-center text-[#7380FF] mb-6 space-x-1">
-              {[1, 2, 3, 4].map((i) => <Star key={i} className="h-6 w-6 fill-current" />)}
-              <StarHalf className="h-6 w-6 fill-current" />
-            </div>
-            <p className="text-gray-400 font-bold uppercase tracking-[0.2em] text-xs">Rated 4.5/5 based on 2,000+ reviews</p>
-          </div>
-
-          <div 
-            ref={testimonialsCarouselRef}
-            className="flex md:grid md:grid-cols-3 gap-4 md:gap-10 overflow-x-auto snap-x snap-mandatory [&::-webkit-scrollbar]:hidden pb-8 px-4 md:px-0"
-          >
-            {[
-              {
-                name: "Jennifer L.",
-                location: "Halifax, NS",
-                text: "The best car buying experience I've ever had. No pressure, completely online, and they delivered my new SUV right to my door. Highly recommend VAC!",
-              },
-              {
-                name: "Mark T.",
-                location: "Moncton, NB",
-                text: "I was worried about my credit, but VAC got me approved in minutes. The process was transparent and the car is in perfect condition.",
-              },
-              {
-                name: "Robert S.",
-                location: "St. John's, NL",
-                text: "Incredible service. I did everything from my phone. The VAC warranty gave me the confidence to buy without seeing it in person first.",
-              },
-            ].map((review, i) => (
-              <motion.div 
-                key={i} 
-                ref={(el) => { testimonialsCardRefs.current[i] = el; }}
-                data-index={i}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.5, delay: i * 0.1 }}
-                className="w-[calc(100vw-56px)] md:w-full flex-shrink-0 snap-center p-8 md:p-12 rounded-[2.5rem] bg-white border border-gray-100 shadow-sm hover:shadow-xl transition-all duration-500"
-              >
-                <p className="text-gray-500 italic mb-10 leading-relaxed text-lg">"{review.text}"</p>
-                <div>
-                  <p className="font-bold text-brand-primary uppercase tracking-widest text-sm mb-1">{review.name}</p>
-                  <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">{review.location}</p>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-          <div className="flex justify-center gap-2 md:hidden">
-            {[0, 1, 2].map((index) => (
-              <div 
-                key={index}
-                className={cn(
-                  "h-2 rounded-full transition-all duration-300",
-                  index === activeTestimonialSlide ? "w-6 bg-brand-primary" : "w-2 bg-gray-300"
-                )}
-              />
-            ))}
-          </div>
-        </div>
-      </section>
-
-
       {/* Final CTA */}
-      <section className="py-32 bg-[#41456B] relative overflow-hidden">
+      <section className="py-16 md:py-32 bg-[#41456B] relative overflow-hidden">
         <div className="absolute inset-0 opacity-10">
           <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white via-transparent to-transparent" />
         </div>
@@ -773,7 +699,7 @@ export default function Home() {
                 <Link to="/inventory">Browse Inventory</Link>
               </Button>
               <Button asChild className="h-16 px-12 rounded-xl bg-[#7380FF] text-white font-bold shadow-2xl shadow-[#7380FF]/40 hover:bg-[#41456B] hover:text-white hover:shadow-lg transition-all duration-300 ease-in-out text-lg">
-                <Link to="/financing">Get Pre-Approved</Link>
+                <Link to="/apply-now">Get Pre-Approved</Link>
               </Button>
             </div>
           </motion.div>

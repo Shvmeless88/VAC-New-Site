@@ -27,6 +27,7 @@ export default function TradeIn() {
   const navigate = useNavigate();
   const location = useLocation();
   const [step, setStep] = useState(1);
+  const [mode, setMode] = useState<'sell' | 'trade'>('sell');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [estimate, setEstimate] = useState<{ low: number, high: number } | null>(null);
   const [formData, setFormData] = useState({
@@ -173,12 +174,13 @@ export default function TradeIn() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...getStoredUtms(),
-          title: `Trade-In: ${formData.name}`,
+          title: `${mode === 'sell' ? 'Sell' : 'Trade-In'}: ${formData.name}`,
           name: formData.name,
           email: formData.email,
           phone: formData.phone,
           isTradeIn: true,
-          notes: `Vehicle: ${formData.year} ${formData.make} ${formData.model} ${formData.trim}\nMileage: ${formData.mileage}km\nCondition: ${formData.condition}\nAI Estimate: $${estimate?.low?.toLocaleString()} - $${estimate?.high?.toLocaleString()}`
+          intent: mode === 'sell' ? 'sell' : 'trade',
+          notes: `Intent: ${mode === 'sell' ? 'Sell for cash' : 'Trade toward a purchase'}\nVehicle: ${formData.year} ${formData.make} ${formData.model} ${formData.trim}\nMileage: ${formData.mileage}km\nCondition: ${formData.condition}\nAI Estimate: $${estimate?.low?.toLocaleString()} - $${estimate?.high?.toLocaleString()}`
         })
       });
       
@@ -203,14 +205,45 @@ export default function TradeIn() {
         {/* Header */}
         <div className="text-center mb-12">
           <Badge className="bg-indigo-50 text-indigo-600 border-indigo-100 mb-6 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider">
-            Modern Trade-In Experience
+            Instant Offer • 100% Online
           </Badge>
           <h1 className="text-4xl md:text-5xl lg:text-7xl font-display font-black text-brand-primary leading-[1.1] mb-8 tracking-tighter">
-            Get your <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#7380FF] to-indigo-600">instant</span> appraisal.
+            {mode === 'sell' ? (
+              <>Sell your car for <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#7380FF] to-indigo-600">cash</span>.</>
+            ) : (
+              <>Trade in. <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#7380FF] to-indigo-600">Upgrade</span> easy.</>
+            )}
           </h1>
           <p className="text-lg md:text-xl text-slate-500 max-w-2xl mx-auto leading-relaxed">
-            Stop guessing your car's value. Using live market data across Atlantic Canada, our AI provides a real-time estimate in seconds.
+            {mode === 'sell'
+              ? "Get a real offer for your vehicle in seconds — no obligation to buy. We handle the paperwork and pick it up at your door across Atlantic Canada."
+              : "Roll your current car's value into your next one. Get an instant estimate, then we swap it at your doorstep when we deliver."}
           </p>
+
+          {step === 1 && (
+            <div className="inline-flex items-center gap-1 mt-8 p-1.5 bg-white rounded-full border border-slate-100 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setMode('sell')}
+                className={cn(
+                  "px-6 py-2.5 rounded-full text-sm font-bold transition-all",
+                  mode === 'sell' ? "bg-[#7380FF] text-white shadow-md" : "text-slate-500 hover:text-slate-800"
+                )}
+              >
+                Sell for cash
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('trade')}
+                className={cn(
+                  "px-6 py-2.5 rounded-full text-sm font-bold transition-all",
+                  mode === 'trade' ? "bg-[#7380FF] text-white shadow-md" : "text-slate-500 hover:text-slate-800"
+                )}
+              >
+                Trade toward a purchase
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="bg-white rounded-[2.5rem] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.08)] border border-slate-100 overflow-hidden">
@@ -343,8 +376,8 @@ export default function TradeIn() {
                       <TrendingUp className="h-8 w-8 text-[#7380FF]" />
                     </div>
                     <div>
-                      <h4 className="font-bold text-slate-900 mb-1">Make this a Guaranteed Offer</h4>
-                      <p className="text-sm text-slate-500 leading-relaxed"> provide your last few details so we can confirm this offer and schedule your doorstep delivery.</p>
+                      <h4 className="font-bold text-slate-900 mb-1">Make this a guaranteed offer</h4>
+                      <p className="text-sm text-slate-500 leading-relaxed">Provide your last few details so we can confirm this offer and {mode === 'sell' ? 'arrange payment and doorstep pickup' : 'schedule your doorstep swap'}.</p>
                     </div>
                     <Button 
                       onClick={() => setStep(3)}
@@ -471,9 +504,59 @@ export default function TradeIn() {
               <Info className="h-6 w-6 text-amber-500" />
             </div>
             <h4 className="font-bold text-slate-900 mb-2">Doorstep Pickup</h4>
-            <h4 className="font-bold text-slate-900 mb-2"></h4>
-            <p className="text-sm text-slate-500 leading-relaxed">When you buy your new car, we'll swap it for your trade-in right at your doorstep. Zero friction.</p>
+            <p className="text-sm text-slate-500 leading-relaxed">{mode === 'sell' ? "We come to you anywhere in Atlantic Canada, hand you payment, and drive it away. Zero friction." : "When we deliver your new car, we swap it for your trade-in right at your doorstep. Zero friction."}</p>
           </div>
+        </div>
+
+        {/* How It Works */}
+        <div className="mt-24">
+          <h2 className="text-3xl md:text-4xl font-display font-bold text-brand-primary text-center mb-4 tracking-tight">How it works</h2>
+          <p className="text-slate-500 text-center max-w-xl mx-auto mb-14">Three simple steps from your driveway to done.</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {[
+              { n: '1', t: 'Tell us about your car', d: 'Enter your year, make, model and mileage. Takes about 60 seconds.' },
+              { n: '2', t: 'Get your instant offer', d: 'Our AI checks live Atlantic Canada market data and gives you a real value range on the spot.' },
+              { n: '3', t: mode === 'sell' ? 'Get paid at your door' : 'Swap it on delivery', d: mode === 'sell' ? 'Accept the offer and we come to you, hand over payment, and drive it away.' : 'We apply the value to your new car and swap vehicles when we deliver.' },
+            ].map((s) => (
+              <div key={s.n} className="relative">
+                <div className="h-12 w-12 rounded-2xl bg-[#7380FF] text-white font-display font-bold text-xl flex items-center justify-center mb-5 shadow-lg shadow-[#7380FF]/20">{s.n}</div>
+                <h4 className="font-bold text-slate-900 text-lg mb-2">{s.t}</h4>
+                <p className="text-sm text-slate-500 leading-relaxed">{s.d}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* FAQ */}
+        <div className="mt-24 max-w-3xl mx-auto">
+          <h2 className="text-3xl md:text-4xl font-display font-bold text-brand-primary text-center mb-14 tracking-tight">Frequently asked questions</h2>
+          <div className="space-y-4">
+            {[
+              { q: 'Is the offer really instant?', a: 'Yes. You get an estimated value range immediately from live market data. A specialist then confirms your final, guaranteed offer.' },
+              { q: 'Do I have to buy a car to sell you mine?', a: 'No. You can sell us your vehicle for cash with no obligation to purchase. If you are buying, you can trade it in and roll the value into your next car.' },
+              { q: 'What if my car is financed or leased?', a: 'That is common and not a problem. Let us know during the process and our team handles the payout details with your lender or lessor.' },
+              { q: 'Where do you operate?', a: 'We serve all of Atlantic Canada and pick up your vehicle right at your door.' },
+              { q: 'How do I get paid?', a: 'Once you accept the final offer, we arrange payment at pickup — fast, secure, and paperwork handled for you.' },
+            ].map((f, i) => (
+              <details key={i} className="group bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                <summary className="flex items-center justify-between gap-4 cursor-pointer list-none p-6 font-bold text-slate-900">
+                  {f.q}
+                  <ChevronRight className="h-5 w-5 text-[#7380FF] shrink-0 transition-transform group-open:rotate-90" />
+                </summary>
+                <p className="px-6 pb-6 text-sm text-slate-500 leading-relaxed">{f.a}</p>
+              </details>
+            ))}
+          </div>
+        </div>
+
+        {/* Bottom CTA */}
+        <div className="mt-20 text-center">
+          <Button
+            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            className="h-14 px-10 rounded-2xl bg-[#7380FF] hover:bg-[#5e41cc] text-white font-bold text-lg shadow-xl shadow-[#7380FF]/20"
+          >
+            Get my instant offer
+          </Button>
         </div>
       </div>
     </div>

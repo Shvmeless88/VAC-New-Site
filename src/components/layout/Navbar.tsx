@@ -160,7 +160,7 @@ export default function Navbar({ className }: { className?: string }) {
                   transition={{ duration: 0.2 }}
                 >
                   <Button asChild className="bg-brand-primary text-white font-bold uppercase tracking-widest text-xs h-9 px-6 rounded-xl shadow-md hover:brightness-110 transition-all">
-                    <Link to="/financing" className="text-white">GET APPROVED</Link>
+                    <Link to="/apply-now" className="text-white">GET APPROVED</Link>
                   </Button>
                 </motion.div>
               )}
@@ -178,7 +178,7 @@ export default function Navbar({ className }: { className?: string }) {
                   transition={{ duration: 0.2 }}
                 >
                   <Button asChild className="bg-brand-primary text-white font-bold uppercase tracking-widest text-[11px] h-8 px-4 rounded-lg shadow-md hover:brightness-110 transition-all">
-                    <Link to="/financing">GET APPROVED</Link>
+                    <Link to="/apply-now">GET APPROVED</Link>
                   </Button>
                 </motion.div>
               )}
@@ -251,7 +251,7 @@ export default function Navbar({ className }: { className?: string }) {
 
                 <div className="p-6 border-t border-slate-50">
                   <Button asChild className="w-full bg-brand-primary text-white font-bold uppercase tracking-widest text-xs h-14 rounded-xl shadow-md hover:brightness-110 transition-all">
-                    <Link to="/financing" onClick={() => setIsOpen(false)}>GET APPROVED</Link>
+                    <Link to="/apply-now" onClick={() => setIsOpen(false)}>GET APPROVED</Link>
                   </Button>
                 </div>
               </SheetContent>

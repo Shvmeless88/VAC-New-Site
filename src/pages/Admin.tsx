@@ -5,6 +5,13 @@ import { useInventory } from '@/hooks/useInventory';
 import { useAdmins } from '@/hooks/useAdmins';
 import { useDeliveries } from '@/hooks/useDeliveries';
 import { db, collection, addDoc, updateDoc, deleteDoc, doc, Timestamp, loginWithGoogle, logout, query, where, getDocs, getDoc, setDoc, ref, uploadBytes, getDownloadURL, deleteObject, storage, serverTimestamp, deleteField, OperationType, handleFirestoreError } from '@/lib/firebase';
+import LeadsPanel from '@/components/admin/LeadsPanel';
+import CrmPanel from '@/components/admin/CrmPanel';
+import CrmTeam from '@/components/admin/CrmTeam';
+import CrmReports from '@/components/admin/CrmReports';
+import CrmNurture from '@/components/admin/CrmNurture';
+import Logo from '@/components/layout/Logo';
+import { compressImage } from '@/lib/imageCompress';
 import { mockInventory } from '@/data/mockInventory';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -17,8 +24,9 @@ import {
   Trash2, 
   Edit2, 
   LogOut, 
-  LayoutDashboard, 
-  Car as CarIcon, 
+  LayoutDashboard,
+  Inbox,
+  Car as CarIcon,
   Database, 
   AlertCircle, 
   CheckCircle2, 
@@ -32,6 +40,7 @@ import {
   Users,
   MessageSquare,
   ChevronRight,
+  ChevronLeft,
   User,
   Phone,
   TrendingUp,
@@ -40,15 +49,19 @@ import {
   Check,
   RotateCw,
   Truck,
+  Moon,
+  Sun,
+  BarChart3,
+  Power,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { Car } from '@/types/index';
 
 import TeamManager from '@/components/admin/TeamManager';
 
-type Tab = 'inventory' | 'team-manager' | 'deliveries' | 'settings';
+type Tab = 'inventory' | 'team-manager' | 'deliveries' | 'settings' | 'leads' | 'crm' | 'inbox' | 'salesteam' | 'reports' | 'pool' | 'nurture';
 
 const toTitleCase = (str: string) => {
   if (!str) return str;
@@ -103,12 +116,45 @@ export default function Admin() {
   const { inventory, loading: inventoryLoading } = useInventory();
   const { deliveries } = useDeliveries();
   const [editingDelivery, setEditingDelivery] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>(role === 'sales_rep' ? 'deliveries' : 'inventory');
-  
+  // Tab lives in the URL (?tab=crm) so a refresh / bookmark / back-button keeps you put.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const ALL_TABS: Tab[] = ['inventory', 'team-manager', 'deliveries', 'settings', 'leads', 'crm', 'inbox', 'salesteam', 'reports', 'pool', 'nurture'];
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    const t = searchParams.get('tab') as Tab | null;
+    if (t && ALL_TABS.includes(t)) return t;
+    return role === 'sales_rep' ? 'crm' : 'inventory';
+  });
   useEffect(() => {
-    const restrictedTabs: Tab[] = ['team-manager', 'inventory', 'settings'];
+    if (searchParams.get('tab') !== activeTab) {
+      setSearchParams((prev) => { const p = new URLSearchParams(prev); p.set('tab', activeTab); return p; }, { replace: true });
+    }
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Admin dark mode — scoped to the dashboard: the `dark` class is added to
+  // <html> only while Admin is mounted, and removed on unmount so the public
+  // site is never affected. Choice persists across sessions.
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try { return (localStorage.getItem('vac-admin-theme') as 'light' | 'dark') || 'light'; } catch { return 'light'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('vac-admin-theme', theme); } catch {}
+    const root = document.documentElement;
+    if (theme === 'dark') root.classList.add('dark'); else root.classList.remove('dark');
+    return () => { root.classList.remove('dark'); };
+  }, [theme]);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem('vac_admin_sidebar_collapsed') === '1'; } catch { return false; }
+  });
+  const toggleSidebar = () => setSidebarCollapsed((c) => {
+    const next = !c;
+    try { localStorage.setItem('vac_admin_sidebar_collapsed', next ? '1' : '0'); } catch {}
+    return next;
+  });
+
+  useEffect(() => {
+    // A sales rep gets ONLY the CRM board — every other tab bounces them back.
+    const restrictedTabs: Tab[] = ['team-manager', 'inventory', 'settings', 'leads', 'deliveries', 'inbox', 'salesteam', 'nurture'];
     if (role === 'sales_rep' && restrictedTabs.includes(activeTab)) {
-      setActiveTab('deliveries');
+      setActiveTab('crm');
     } else if (role !== 'super_admin' && ['team-manager', 'settings'].includes(activeTab)) {
       setActiveTab('inventory');
     }
@@ -138,10 +184,8 @@ export default function Admin() {
   });
   const [isUploadingDelivery, setIsUploadingDelivery] = useState(false);
   
-  // 2FA PIN State
-  const [isPinVerified, setIsPinVerified] = useState(false);
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState(false);
+  // PIN gate removed — access is secured by @drivevac.ca Google SSO + enforced 2FA.
+  const handleLogout = () => { logout(); };
 
   // Sirv Integration State
   const [isSirvConfigOpen, setIsSirvConfigOpen] = useState(false);
@@ -1185,7 +1229,7 @@ export default function Admin() {
     setIsDecoding(true);
     setError(null);
     try {
-      const response = await fetch(`/api/decode-vin/${newVehicle.vin}`);
+      const response = await fetch(`/api/decode-vin/${newVehicle.vin}?price=${newVehicle.price || ''}&miles=${newVehicle.mileage || ''}`);
       const data = await response.json();
 
       if (data.source.startsWith('marketcheck') && data.data) {
@@ -1249,7 +1293,9 @@ export default function Admin() {
           manufacturerCode: mc.manufacturer_code || mc.manufacturerCode || newVehicle.manufacturerCode || '',
           packageCode: mc.package_code || mc.packageCode || newVehicle.packageCode || '',
           marketPriceRating: mc.marketPriceRating || newVehicle.marketPriceRating,
-          marketPriceDifference: mc.marketPriceDifference || newVehicle.marketPriceDifference,
+          marketPriceDifference: mc.marketPriceDifference ?? newVehicle.marketPriceDifference,
+          marketSampleSize: mc.marketSampleSize ?? newVehicle.marketSampleSize,
+          marketMedian: mc.marketMedian ?? newVehicle.marketMedian,
           accidents: mc.accidents !== undefined ? mc.accidents : newVehicle.accidents,
           owners: mc.owners !== undefined ? mc.owners : newVehicle.owners,
           searchTags: Array.from(new Set([
@@ -1318,7 +1364,7 @@ export default function Admin() {
     setIsDecoding(true);
     setError(null);
     try {
-      const response = await fetch(`/api/decode-vin/${editingVehicle.vin}`);
+      const response = await fetch(`/api/decode-vin/${editingVehicle.vin}?price=${editingVehicle.price || ''}&miles=${editingVehicle.mileage || ''}`);
       const data = await response.json();
 
       if (data.source.startsWith('marketcheck') && data.data) {
@@ -1384,7 +1430,9 @@ export default function Admin() {
           manufacturerCode: mc.manufacturer_code || mc.manufacturerCode || editingVehicle.manufacturerCode || '',
           packageCode: mc.package_code || mc.packageCode || editingVehicle.packageCode || '',
           marketPriceRating: mc.marketPriceRating || editingVehicle.marketPriceRating,
-          marketPriceDifference: mc.marketPriceDifference || editingVehicle.marketPriceDifference,
+          marketPriceDifference: mc.marketPriceDifference ?? editingVehicle.marketPriceDifference,
+          marketSampleSize: mc.marketSampleSize ?? editingVehicle.marketSampleSize,
+          marketMedian: mc.marketMedian ?? editingVehicle.marketMedian,
           accidents: mc.accidents !== undefined ? mc.accidents : editingVehicle.accidents,
           owners: mc.owners !== undefined ? mc.owners : editingVehicle.owners,
           searchTags: Array.from(new Set([
@@ -1686,7 +1734,7 @@ export default function Admin() {
           </CardHeader>
           <CardContent className="text-center">
             <p className="text-gray-500 mb-8">Signed in as: <span className="font-bold text-brand-primary">{user.email}</span></p>
-            <Button variant="outline" onClick={logout} className="w-full h-12 rounded-xl border-gray-200 font-bold mb-4">
+            <Button variant="outline" onClick={handleLogout} className="w-full h-12 rounded-xl border-gray-200 font-bold mb-4">
               Sign Out
             </Button>
             <Link to="/" className="text-brand-primary font-bold hover:underline">Back to Home</Link>
@@ -1696,187 +1744,57 @@ export default function Admin() {
     );
   }
 
-  // 2FA PIN Verification Screen
-  if (!isPinVerified) {
-    const ADMIN_PIN = "1234"; // Default PIN - User can change this
-
-    const handlePinSubmit = (e: React.FormEvent) => {
-      e.preventDefault();
-      if (pinInput === ADMIN_PIN) {
-        setIsPinVerified(true);
-        toast.success('Identity verified');
-      } else {
-        setPinError(true);
-        setPinInput('');
-        toast.error('Incorrect PIN');
-        setTimeout(() => setPinError(false), 500);
-      }
-    };
-
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-brand-primary px-4">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="w-full max-w-md"
-        >
-          <Card className="rounded-[2.5rem] shadow-2xl border-none p-10 overflow-hidden relative">
-            <div className="absolute top-0 left-0 w-full h-2 bg-brand-secondary" />
-            
-            <CardHeader className="text-center pb-8">
-              <div className="bg-brand-bg h-20 w-20 rounded-full flex items-center justify-center mx-auto mb-6">
-                <ShieldCheck className="h-10 w-10 text-brand-primary" />
-              </div>
-              <CardTitle className="text-3xl font-display font-bold text-brand-primary">Verify Identity</CardTitle>
-              <CardDescription className="text-lg">Enter your secondary admin access code.</CardDescription>
-            </CardHeader>
-
-            <CardContent>
-              <form onSubmit={handlePinSubmit} className="space-y-6">
-                <div className="space-y-2">
-                  <div className={`flex justify-center gap-4 ${pinError ? 'animate-shake' : ''}`}>
-                    {[0, 1, 2, 3].map((i) => (
-                      <div 
-                        key={i}
-                        className={`w-12 h-16 rounded-2xl border-2 flex items-center justify-center text-2xl font-bold transition-all ${
-                          pinInput.length > i 
-                            ? 'border-brand-primary bg-brand-bg text-brand-primary' 
-                            : 'border-gray-100 bg-gray-50 text-gray-300'
-                        }`}
-                      >
-                        {pinInput.length > i ? '●' : ''}
-                      </div>
-                    ))}
-                  </div>
-                  <Input
-                    type="password"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    maxLength={4}
-                    value={pinInput}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/[^0-9]/g, '');
-                      if (val.length <= 4) setPinInput(val);
-                      if (val.length === 4 && val === ADMIN_PIN) {
-                        setIsPinVerified(true);
-                        toast.success('Identity verified');
-                      }
-                    }}
-                    autoFocus
-                    className="sr-only"
-                  />
-                </div>
-
-                <p className="text-center text-sm text-gray-400 font-medium">
-                  Signed in as <span className="text-brand-primary font-bold">{user.email}</span>
-                </p>
-
-                <div className="grid grid-cols-3 gap-3">
-                  {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                    <Button
-                      key={num}
-                      type="button"
-                      variant="outline"
-                      className="h-16 rounded-2xl text-xl font-bold border-gray-100 hover:bg-brand-bg hover:text-brand-primary hover:border-brand-primary transition-all"
-                      onClick={() => {
-                        if (pinInput.length < 4) setPinInput(prev => prev + num);
-                      }}
-                    >
-                      {num}
-                    </Button>
-                  ))}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="h-16 rounded-2xl text-gray-400 font-bold"
-                    onClick={() => setPinInput('')}
-                  >
-                    Clear
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-16 rounded-2xl text-xl font-bold border-gray-100 hover:bg-brand-bg hover:text-brand-primary hover:border-brand-primary transition-all"
-                    onClick={() => {
-                      if (pinInput.length < 4) setPinInput(prev => prev + '0');
-                    }}
-                  >
-                    0
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="h-16 rounded-2xl text-gray-400 font-bold"
-                    onClick={() => setPinInput(prev => prev.slice(0, -1))}
-                  >
-                    <ArrowLeft className="h-6 w-6" />
-                  </Button>
-                </div>
-
-                <Button 
-                  type="submit"
-                  className="w-full h-14 bg-brand-primary hover:bg-brand-secondary text-white font-bold rounded-2xl shadow-xl shadow-brand-primary/20 transition-all mt-4"
-                  disabled={pinInput.length !== 4}
-                >
-                  Verify & Enter
-                </Button>
-
-                <div className="text-center mt-6">
-                  <Button variant="link" onClick={logout} className="text-gray-400 hover:text-brand-primary font-bold">
-                    Sign Out
-                  </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
-        </motion.div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
       {/* Sidebar */}
-      <aside className="w-72 bg-brand-primary text-white hidden lg:flex flex-col p-8 fixed h-full">
-        <div className="flex items-center gap-3 mb-12">
-          <div className="bg-white/10 p-2 rounded-xl">
-            <LayoutDashboard className="h-6 w-6 text-brand-secondary" />
+      <aside className={`${sidebarCollapsed ? 'w-20 px-3 py-6' : 'w-72 p-6'} bg-brand-primary text-white hidden lg:flex flex-col fixed h-full transition-all duration-200`}>
+        <div className={`flex items-center mb-10 ${sidebarCollapsed ? 'flex-col gap-3' : 'justify-between px-2'}`}>
+          <div className="flex items-center gap-2.5">
+            <Logo variant="white" className="h-8 w-auto shrink-0" />
+            {!sidebarCollapsed && <span className="text-2xl font-display font-bold tracking-tight">VAC Admin</span>}
           </div>
-          <span className="text-2xl font-display font-bold tracking-tight">VAC Admin</span>
+          <button
+            onClick={toggleSidebar}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="text-white/50 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+          >
+            {sidebarCollapsed ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
+          </button>
         </div>
 
         <nav className="space-y-2 flex-grow">
-          {role !== 'sales_rep' && (
-            <Button 
-              variant="ghost" 
-              onClick={() => setActiveTab('inventory')}
-              className={`w-full justify-start h-12 rounded-xl font-bold ${activeTab === 'inventory' ? 'bg-white/10' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
-            >
-              <CarIcon className="mr-3 h-5 w-5" /> Inventory
-            </Button>
-          )}
-          {role === 'super_admin' && (
-            <Button 
-              variant="ghost" 
-              onClick={() => setActiveTab('team-manager')}
-              className={`w-full justify-start h-12 rounded-xl font-bold ${activeTab === 'team-manager' ? 'bg-white/10' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
-            >
-              <Users className="mr-3 h-5 w-5" /> Public Team
-            </Button>
-          )}
-          {(role === 'super_admin' || role === 'sales_rep') && (
-            <Button 
-              variant="ghost" 
-              onClick={() => setActiveTab('deliveries')}
-              className={`w-full justify-start h-12 rounded-xl font-bold ${activeTab === 'deliveries' ? 'bg-white/10' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
-            >
-              <Truck className="mr-3 h-5 w-5" /> Manage Deliveries
-            </Button>
-          )}
+          {([
+            { tab: 'inbox', label: 'Inbox', Icon: Inbox, show: role !== 'sales_rep' },
+            { tab: 'crm', label: 'CRM', Icon: Database, show: true },
+            { tab: 'pool', label: 'Free to Call Pool', Icon: Power, show: true },
+            { tab: 'nurture', label: 'Nurture', Icon: Moon, show: role !== 'sales_rep' },
+            { tab: 'salesteam', label: 'Sales Team', Icon: Users, show: role !== 'sales_rep' },
+            { tab: 'reports', label: 'Reports', Icon: BarChart3, show: true },
+            { tab: 'inventory', label: 'Inventory', Icon: CarIcon, show: role !== 'sales_rep' },
+            { tab: 'leads', label: 'Leads', Icon: LayoutDashboard, show: role !== 'sales_rep' },
+            { tab: 'team-manager', label: 'Public Team', Icon: Users, show: role === 'super_admin' },
+            { tab: 'deliveries', label: 'Manage Deliveries', Icon: Truck, show: role === 'super_admin' },
+          ] as { tab: Tab; label: string; Icon: any; show: boolean }[])
+            .filter((n) => n.show)
+            .map((n) => {
+              const active = activeTab === n.tab;
+              return (
+                <Button
+                  key={n.tab}
+                  variant="ghost"
+                  onClick={() => setActiveTab(n.tab)}
+                  title={sidebarCollapsed ? n.label : undefined}
+                  className={`w-full h-12 rounded-2xl font-bold transition-all ${sidebarCollapsed ? 'justify-center px-0' : 'justify-start'} ${active ? 'bg-brand-accent text-white shadow-lg shadow-brand-accent/30' : 'text-white/50 hover:text-white hover:bg-white/10'}`}
+                >
+                  <n.Icon className={`${sidebarCollapsed ? '' : 'mr-3'} h-5 w-5`} />{!sidebarCollapsed && n.label}
+                </Button>
+              );
+            })}
         </nav>
 
         <div className="mt-auto pt-8 border-t border-white/10">
-          {realRole === 'super_admin' && (
+          {!sidebarCollapsed && realRole === 'super_admin' && (
             <div className="mb-6 p-4 bg-white/5 rounded-2xl border border-white/10">
               <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-3">Role Preview</p>
               <Select 
@@ -1900,41 +1818,55 @@ export default function Admin() {
               )}
             </div>
           )}
-          <div className="flex items-center gap-3 mb-6">
-            <div className="h-10 w-10 rounded-full bg-brand-secondary flex items-center justify-center font-bold text-brand-primary">
+          <div className={`flex items-center gap-3 mb-6 ${sidebarCollapsed ? 'justify-center' : ''}`}>
+            <div className="h-10 w-10 rounded-full bg-brand-secondary flex items-center justify-center font-bold text-brand-primary shrink-0" title={sidebarCollapsed ? (user.displayName || user.email || '') : undefined}>
               {user.displayName?.charAt(0) || user.email?.charAt(0)}
             </div>
-            <div className="flex flex-col overflow-hidden">
-              <span className="font-bold truncate">{user.displayName || 'Admin'}</span>
-              <span className="text-xs text-white/50 truncate">{user.email}</span>
-            </div>
+            {!sidebarCollapsed && (
+              <div className="flex flex-col overflow-hidden">
+                <span className="font-bold truncate">{user.displayName || 'Admin'}</span>
+                <span className="text-xs text-white/50 truncate">{user.email}</span>
+              </div>
+            )}
           </div>
-          <Button 
-            variant="ghost" 
-            onClick={logout}
-            className="w-full justify-start h-12 rounded-xl text-white/60 hover:text-white hover:bg-white/5 font-bold"
+          <Button
+            variant="ghost"
+            onClick={handleLogout}
+            title={sidebarCollapsed ? 'Sign Out' : undefined}
+            className={`w-full h-12 rounded-xl text-white/60 hover:text-white hover:bg-white/5 font-bold ${sidebarCollapsed ? 'justify-center px-0' : 'justify-start'}`}
           >
-            <LogOut className="mr-3 h-5 w-5" /> Sign Out
+            <LogOut className={`${sidebarCollapsed ? '' : 'mr-3'} h-5 w-5`} />{!sidebarCollapsed && 'Sign Out'}
           </Button>
         </div>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 lg:ml-72 p-8 lg:p-12">
+      <main className={`flex-1 min-w-0 transition-all duration-200 ${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-72'} ${activeTab === 'crm' ? 'p-4 lg:p-6' : 'p-8 lg:p-12'}`}>
         {/* Top Bar */}
         <div className="flex justify-end items-center mb-8 gap-4">
-          <Button 
-            variant="outline" 
-            className="h-10 px-4 border-gray-200 text-gray-600 font-bold rounded-xl hover:bg-gray-50"
-            asChild
+          <button
+            onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            aria-label="Toggle dark mode"
+            className="h-10 w-10 inline-flex items-center justify-center rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition"
           >
-            <Link to="/">
-              <LogOut className="h-4 w-4 mr-2" /> Exit Admin
-            </Link>
-          </Button>
+            {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
         </div>
 
-        {activeTab === 'inventory' ? (
+        {activeTab === 'inbox' ? (
+          <CrmPanel role={role} mode="inbox" />
+        ) : activeTab === 'nurture' ? (
+          <CrmNurture />
+        ) : activeTab === 'pool' ? (
+          <CrmPanel role={role} mode="pool" />
+        ) : activeTab === 'reports' ? (
+          <CrmReports role={role} />
+        ) : activeTab === 'salesteam' ? (
+          <CrmTeam />
+        ) : activeTab === 'crm' ? (
+          <CrmPanel role={role} />
+        ) : activeTab === 'inventory' ? (
           <>
             <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
               <div>
@@ -1947,7 +1879,7 @@ export default function Admin() {
                     onClick={seedData} 
                     disabled={isSeeding}
                     variant="outline"
-                    className="h-14 px-8 rounded-2xl border-brand-primary text-brand-primary font-bold hover:bg-brand-bg"
+                    className="h-14 px-8 rounded-2xl border-brand-primary text-brand-primary font-bold hover:bg-brand-accent/5"
                   >
                     {isSeeding ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Database className="mr-2 h-5 w-5" />}
                     Seed Initial Data
@@ -1965,18 +1897,18 @@ export default function Admin() {
 
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
-              <Card className="rounded-3xl border-none shadow-sm p-8">
+              <Card className="rounded-3xl border border-gray-100 shadow-sm p-8">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-1">Total Vehicles</p>
                     <h3 className="text-4xl font-display font-bold text-brand-primary">{inventory.length}</h3>
                   </div>
-                  <div className="bg-brand-bg p-4 rounded-2xl">
-                    <CarIcon className="h-8 w-8 text-brand-primary" />
+                  <div className="bg-brand-accent/10 p-4 rounded-2xl">
+                    <CarIcon className="h-8 w-8 text-brand-accent" />
                   </div>
                 </div>
               </Card>
-              <Card className="rounded-3xl border-none shadow-sm p-8">
+              <Card className="rounded-3xl border border-gray-100 shadow-sm p-8">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-1">Featured</p>
@@ -1984,12 +1916,12 @@ export default function Admin() {
                       {inventory.filter(c => c.isFeatured).length}
                     </h3>
                   </div>
-                  <div className="bg-brand-bg p-4 rounded-2xl">
-                    <Star className="h-8 w-8 text-brand-primary" />
+                  <div className="bg-brand-accent/10 p-4 rounded-2xl">
+                    <Star className="h-8 w-8 text-brand-accent" />
                   </div>
                 </div>
               </Card>
-              <Card className="rounded-3xl border-none shadow-sm p-8">
+              <Card className="rounded-3xl border border-gray-100 shadow-sm p-8">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-1">Active Listings</p>
@@ -2364,7 +2296,7 @@ export default function Admin() {
                               <div className="space-y-2">
                                 <div className="flex justify-between items-center mb-1">
                                   <Label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Sale Price ($)</Label>
-                                  <Button type="button" variant="ghost" size="sm" onClick={() => getMarketPrice(true)} disabled={isGeneratingPrice} className="h-6 text-[10px] text-brand-primary font-bold hover:bg-brand-bg rounded-lg px-2">
+                                  <Button type="button" variant="ghost" size="sm" onClick={() => getMarketPrice(true)} disabled={isGeneratingPrice} className="h-6 text-[10px] text-brand-primary font-bold hover:bg-brand-accent/5 rounded-lg px-2">
                                     {isGeneratingPrice ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <TrendingUp className="h-3 w-3 mr-1" />}
                                     Market Price
                                   </Button>
@@ -2385,7 +2317,7 @@ export default function Admin() {
                               size="sm"
                               onClick={() => handleFetchFromSirv(true)}
                               disabled={isFetchingSirv}
-                              className="h-6 text-[10px] text-brand-primary font-bold hover:bg-brand-bg rounded-lg px-2"
+                              className="h-6 text-[10px] text-brand-primary font-bold hover:bg-brand-accent/5 rounded-lg px-2"
                             >
                               {isFetchingSirv ? (
                                 <Loader2 className="h-3 w-3 animate-spin mr-1" />
@@ -2432,7 +2364,7 @@ export default function Admin() {
                                 size="sm"
                                 onClick={() => generateAIDescription(true)}
                                 disabled={isGeneratingDescription}
-                                className="h-8 text-brand-primary font-bold hover:bg-brand-bg rounded-lg"
+                                className="h-8 text-brand-primary font-bold hover:bg-brand-accent/5 rounded-lg"
                               >
                                 {isGeneratingDescription ? (
                                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -2447,7 +2379,7 @@ export default function Admin() {
                                   variant="outline"
                                   size="sm"
                                   onClick={connectAI}
-                                  className="h-8 text-xs font-bold border-brand-primary/20 hover:bg-brand-bg rounded-lg"
+                                  className="h-8 text-xs font-bold border-brand-primary/20 hover:bg-brand-accent/5 rounded-lg"
                                 >
                                   Connect AI
                                 </Button>
@@ -2841,7 +2773,7 @@ export default function Admin() {
                             <div className="space-y-2">
                               <div className="flex justify-between items-center mb-1">
                                 <Label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Sale Price ($)</Label>
-                                <Button type="button" variant="ghost" size="sm" onClick={() => getMarketPrice(false)} disabled={isGeneratingPrice} className="h-6 text-[10px] text-brand-primary font-bold hover:bg-brand-bg rounded-lg px-2">
+                                <Button type="button" variant="ghost" size="sm" onClick={() => getMarketPrice(false)} disabled={isGeneratingPrice} className="h-6 text-[10px] text-brand-primary font-bold hover:bg-brand-accent/5 rounded-lg px-2">
                                   {isGeneratingPrice ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <TrendingUp className="h-3 w-3 mr-1" />}
                                   Market Price
                                 </Button>
@@ -2860,7 +2792,7 @@ export default function Admin() {
                               size="sm"
                               onClick={() => handleFetchFromSirv(false)}
                               disabled={isFetchingSirv}
-                              className="h-6 text-[10px] text-brand-primary font-bold hover:bg-brand-bg rounded-lg px-2"
+                              className="h-6 text-[10px] text-brand-primary font-bold hover:bg-brand-accent/5 rounded-lg px-2"
                             >
                               {isFetchingSirv ? (
                                 <Loader2 className="h-3 w-3 animate-spin mr-1" />
@@ -2908,7 +2840,7 @@ export default function Admin() {
                                 size="sm"
                                 onClick={() => generateAIDescription(false)}
                                 disabled={isGeneratingDescription}
-                                className="h-8 text-brand-primary font-bold hover:bg-brand-bg rounded-lg"
+                                className="h-8 text-brand-primary font-bold hover:bg-brand-accent/5 rounded-lg"
                               >
                                 {isGeneratingDescription ? (
                                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -2923,7 +2855,7 @@ export default function Admin() {
                                   variant="outline"
                                   size="sm"
                                   onClick={connectAI}
-                                  className="h-8 text-xs font-bold border-brand-primary/20 hover:bg-brand-bg rounded-lg"
+                                  className="h-8 text-xs font-bold border-brand-primary/20 hover:bg-brand-accent/5 rounded-lg"
                                 >
                                   Connect AI
                                 </Button>
@@ -3142,7 +3074,7 @@ export default function Admin() {
                                 <Button 
                                   variant="ghost" 
                                   size="icon" 
-                                  className="h-10 w-10 rounded-xl text-gray-400 hover:text-brand-primary hover:bg-brand-bg"
+                                  className="h-10 w-10 rounded-xl text-gray-400 hover:text-brand-primary hover:bg-brand-accent/5"
                                   onClick={() => handleEdit(car)}
                                 >
                                   <Edit2 className="h-5 w-5" />
@@ -3182,8 +3114,13 @@ export default function Admin() {
                     try {
                       let photoUrl = newDelivery.photoUrl || '';
                       if (newDelivery.photo) {
-                        const photoRef = ref(storage, `deliveries/${Date.now()}_${newDelivery.photo.name}`);
-                        await uploadBytes(photoRef, newDelivery.photo);
+                        // Phone photos arrive at 5-6MB. Firebase Storage serves
+                        // whatever we upload — it can't resize on the fly — so a
+                        // raw upload becomes a 6MB download for every visitor.
+                        // Shrink it here, once, instead.
+                        const compressed = await compressImage(newDelivery.photo, 1600, 0.82);
+                        const photoRef = ref(storage, `deliveries/${Date.now()}_${compressed.name}`);
+                        await uploadBytes(photoRef, compressed);
                         photoUrl = await getDownloadURL(photoRef);
                       }
                       
@@ -3266,6 +3203,8 @@ export default function Admin() {
                   </div>
                 </div>
               </div>
+            ) : activeTab === 'leads' ? (
+              <LeadsPanel />
             ) : (
               <div className="flex flex-col items-center justify-center py-20 text-center">
                 <div className="h-20 w-20 bg-gray-100 rounded-full flex items-center justify-center mb-6">

@@ -72,7 +72,21 @@ import {
   ChevronUp,
   Share2,
   Heart,
-  Timer
+  Timer,
+  Wifi,
+  Usb,
+  Monitor,
+  Radio,
+  Mic,
+  BatteryCharging,
+  Radar,
+  Route,
+  Disc,
+  Disc3,
+  ShieldAlert,
+  Lightbulb,
+  Snowflake,
+  LifeBuoy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LeadForm } from '@/components/LeadForm';
@@ -292,28 +306,45 @@ function CheckAvailabilityDialog({ car }: { car: Car }) {
 // CarDetails component start
 const getFeatureIcon = (feature: string) => {
   const f = feature.toLowerCase();
-  if (f.includes('sunroof') || f.includes('moonroof')) return Sun;
-  if (f.includes('navigation') || f.includes('gps')) return Map;
-  if (f.includes('heated seats')) return Thermometer;
+
+  // --- Technology & media ---
+  if (f.includes('apple carplay') || f.includes('android auto') || f.includes('phone integration') || (f.includes('phone') && !f.includes('microphone'))) return Smartphone;
   if (f.includes('bluetooth')) return Bluetooth;
-  if (f.includes('apple carplay') || f.includes('android auto')) return Smartphone;
+  if (f.includes('wi-fi') || f.includes('wifi') || f.includes('hotspot')) return Wifi;
+  if (f.includes('usb') || f.includes('aux')) return Usb;
+  if (f.includes('touch screen') || f.includes('touchscreen') || f.includes('screen') || f.includes('display') || f.includes('infotainment')) return Monitor;
+  if (f.includes('navigation') || f.includes('gps')) return Map;
+  if (f.includes('satellite') || f.includes('radio')) return Radio;
+  if (f.includes('speaker') || f.includes('sound') || f.includes('audio') || f.includes('bose') || f.includes('premium sound')) return Music;
+  if (f.includes('voice')) return Mic;
+
+  // --- Safety & driver assist ---
   if (f.includes('blind spot')) return Eye;
   if (f.includes('camera') || f.includes('surround')) return Video;
-  if (f.includes('cruise control')) return Timer;
-  if (f.includes('leather') || f.includes('synthetic')) return Armchair;
-  if (f.includes('awd') || f.includes('4wd') || f.includes('4x4')) return Gauge;
-  if (f.includes('premium sound') || f.includes('audio') || f.includes('speaker')) return Music;
-  if (f.includes('keyless') || f.includes('push')) return Key;
-  if (f.includes('remote engine start')) return Zap;
-  if (f.includes('lane') || f.includes('steering')) return Compass;
-  if (f.includes('ac') || f.includes('climate') || f.includes('temperature')) return Wind;
+  if (f.includes('cross traffic') || f.includes('collision') || f.includes('adaptive cruise') || f.includes('cruise control') || f.includes('radar') || f.includes('autonomous')) return Radar;
+  if (f.includes('lane')) return Route;
+  if (f.includes('brake') || f.includes('abs')) return Disc;
+  if (f.includes('parking') || f.includes('distance') || f.includes('sensor')) return Radar;
+  if (f.includes('airbag')) return ShieldAlert;
+  if (f.includes('fog') || f.includes('headlight') || f.includes('led') || f.includes('light')) return Lightbulb;
+  if (f.includes('emergency') || f.includes('assist') || f.includes('safety') || f.includes('security') || f.includes('anti') || f.includes('stability') || f.includes('traction')) return ShieldCheck;
+
+  // --- Comfort & interior ---
+  if (f.includes('sunroof') || f.includes('moonroof')) return Sun;
+  if (f.includes('cooled') || f.includes('ventilated')) return Snowflake;
+  if (f.includes('heated') || f.includes('mirror')) return Thermometer;
+  if (f.includes('climate') || f.includes('a/c') || f.includes('air condition') || f.includes('temperature')) return Wind;
+  if (f.includes('leather') || f.includes('seat') || f.includes('upholstery') || f.includes('lumbar') || f.includes('bucket')) return Armchair;
+  if (f.includes('steering')) return LifeBuoy;
+  if (f.includes('keyless') || f.includes('remote') || f.includes('smart key') || f.includes('smart card') || f.includes('push') || f.includes('start')) return Key;
+  if (f.includes('charging')) return BatteryCharging;
   if (f.includes('rain')) return CloudRain;
-  if (f.includes('liftgate')) return Truck;
-  if (f.includes('led') || f.includes('headlight')) return Zap;
-  if (f.includes('charging')) return Battery;
-  if (f.includes('wi-fi') || f.includes('hotspot')) return CloudLightning;
-  if (f.includes('emergency braking')) return ShieldCheck;
-  
+
+  // --- Wheels & mechanical ---
+  if (f.includes('wheel') || f.includes('tire') || f.includes('alloy') || f.includes('rim')) return Disc3;
+  if (f.includes('awd') || f.includes('4wd') || f.includes('4x4') || f.includes('drivetrain')) return Compass;
+  if (f.includes('tow') || f.includes('trailer') || f.includes('liftgate') || f.includes('roof rail') || f.includes('cargo')) return Truck;
+
   return CheckCircle2;
 };
 
@@ -422,6 +453,30 @@ export default function CarDetails() {
 
   useEffect(() => {
     const fetchFeatures = async () => {
+      // Prefer the categorized MarketCheck feature buckets stored on the car
+      // (populated whenever a vehicle is saved in admin, and by the backfill).
+      // These are the rich, curated features — use them before anything else.
+      // Strip vague/noise entries MarketCheck sometimes returns so only real,
+      // recognizable features show as tiles.
+      const FEATURE_JUNK = /upgraded (tire type|wheel size|aux jack input|usb connection|reverse light)|^(automatic|cvt|manual) transmission$|compact suv|upper medium|mid-size|autonomous drive|driver bucket seat/i;
+      const clean = (arr?: string[]) => (arr || []).filter((x) => x && !FEATURE_JUNK.test(x));
+      const storedBuckets = {
+        comfortAndConvenience: clean(car?.comfortAndConvenience),
+        entertainmentAndMedia: clean(car?.entertainmentAndMedia),
+        safetyAndSecurity: clean(car?.safetyAndSecurity),
+        extrasAndPackages: clean(car?.extrasAndPackages),
+      };
+      const bucketTotal =
+        storedBuckets.comfortAndConvenience.length +
+        storedBuckets.entertainmentAndMedia.length +
+        storedBuckets.safetyAndSecurity.length +
+        storedBuckets.extrasAndPackages.length;
+      if (bucketTotal >= 4) {
+        setCategorizedFeatures(storedBuckets);
+        setLoadingFeatures(false);
+        return;
+      }
+
       // If manual features are provided, use them and categorize them simply
       if (car?.features && car.features.length > 0) {
         console.log(`[Features] Using manual features:`, car.features);
@@ -861,17 +916,25 @@ export default function CarDetails() {
               Newly Added
             </div>
           )}
-          {car.marketPriceRating && (
+          {car.marketPriceRating && car.marketPriceRating !== 'High Price' && (
             <div className={cn(
               "rounded-lg px-2.5 py-1 shadow-md text-[10px] font-black uppercase tracking-wider flex items-center gap-1",
-              car.marketPriceRating.includes('Great') || car.marketPriceRating.includes('Good') 
-                ? "bg-blue-600 text-white" 
+              car.marketPriceRating.includes('Great') || car.marketPriceRating.includes('Good')
+                ? "bg-blue-600 text-white"
                 : "bg-slate-100 text-slate-600"
             )}>
               <TrendingDown className="h-3 w-3" />
               {car.marketPriceRating}
+              {typeof car.marketPriceDifference === 'number' && car.marketPriceDifference > 0 && (
+                <span className="font-bold">· ${car.marketPriceDifference.toLocaleString()} below market</span>
+              )}
             </div>
           )}
+          {car.marketPriceRating && car.marketPriceRating !== 'High Price' && car.marketSampleSize ? (
+            <p className="w-full text-[11px] text-slate-400 -mt-0.5">
+              Based on {car.marketSampleSize} similar listings across Canada
+            </p>
+          ) : null}
           <h1 className="text-[22px] font-bold tracking-tight text-slate-900">
             {car.year} {car.make} {car.model}
           </h1>
@@ -955,7 +1018,7 @@ export default function CarDetails() {
 
   return (
     <Dialog open={isLeadDialogOpen} onOpenChange={setIsLeadDialogOpen}>
-      <div className="min-h-screen bg-white md:pt-20 pb-24">
+      <div className="min-h-screen bg-white pt-16 md:pt-20 pb-24">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
           {/* Breadcrumbs */}
           <nav className="hidden lg:flex items-center space-x-2 text-sm text-gray-400 lg:mb-8">
@@ -1014,21 +1077,21 @@ export default function CarDetails() {
                 <Maximize2 strokeWidth={1.5} className="h-4 w-4" />
               </button>
 
-              {/* Exterior / Interior Toggle Pill - Moved to Bottom Middle */}
-              <div 
-                className="absolute bottom-4 z-30 flex items-center bg-white/90 backdrop-blur-md p-1 rounded-full shadow-sm border border-slate-100"
+              {/* Exterior / Interior toggle — top-center so it doesn't cover the vehicle */}
+              <div
+                className="absolute top-4 z-30 flex items-center bg-white/85 backdrop-blur-md p-1 rounded-full shadow-md border border-white/60"
                 style={{ left: '50%', transform: 'translateX(-50%)' }}
               >
-                <button 
+                <button
                   onClick={() => setViewMode('exterior')}
-                  className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all ${viewMode === 'exterior' ? 'bg-brand-primary text-white' : 'text-brand-primary/60 hover:text-brand-primary'}`}
+                  className={`px-5 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wider transition-all ${viewMode === 'exterior' ? 'bg-brand-primary text-white shadow-sm' : 'text-brand-primary/60 hover:text-brand-primary'}`}
                 >
                   Exterior
                 </button>
                 {(car?.interior360Photo || car?.interior360Url) && (
-                  <button 
+                  <button
                     onClick={() => setViewMode('interior')}
-                    className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all ${viewMode === 'interior' ? 'bg-brand-primary text-white' : 'text-brand-primary/60 hover:text-brand-primary'}`}
+                    className={`px-5 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wider transition-all ${viewMode === 'interior' ? 'bg-brand-primary text-white shadow-sm' : 'text-brand-primary/60 hover:text-brand-primary'}`}
                   >
                     Interior
                   </button>
@@ -1105,7 +1168,7 @@ export default function CarDetails() {
                   150-Point Inspected
                 </div>
                 <div className="rounded-full border border-slate-100 px-3 py-1 text-[10px] font-bold text-emerald-600 uppercase tracking-widest bg-white">
-                  100% Encrypted
+                  360° Verified
                 </div>
                 {car.accidents === 0 && (
                   <div className="rounded-full border border-slate-100 px-3 py-1 text-[10px] font-bold text-slate-600 uppercase tracking-widest bg-white">
@@ -1136,31 +1199,9 @@ export default function CarDetails() {
                 id="overview" 
                 className="scroll-mt-32"
               >
-                {/* Feature Highlights Bar */}
-                {(car.features && car.features.length > 0) && (
-                  <div className="bg-gradient-to-br from-brand-primary/5 to-transparent p-5 md:p-8 rounded-[2.5rem] border border-brand-primary/10 mb-8 mt-4">
-                    <div className="flex flex-wrap items-center justify-center md:justify-start gap-x-8 gap-y-6">
-                      {[
-                        'Panoramic Sunroof', 'Navigation System', 'Leather / Premium Synthetic Upholstery',
-                        'Heated Front Seats', 'Backup Camera', 'Apple CarPlay', 'Wireless Apple CarPlay',
-                        'AWD', '360-Degree Surround Camera', 'Adaptive Cruise Control',
-                        'Blind Spot Monitoring', 'Remote Engine Start'
-                      ].filter(f => car.features?.includes(f)).slice(0, 6).map((feature) => {
-                        const Icon = getFeatureIcon(feature);
-                        return (
-                          <div key={feature} className="flex flex-col items-center gap-2 group">
-                            <div className="w-12 h-12 rounded-2xl bg-white shadow-sm flex items-center justify-center group-hover:scale-110 transition-transform duration-500 border border-brand-primary/5">
-                              <Icon className="w-6 h-6 text-brand-primary" strokeWidth={1.5} />
-                            </div>
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center max-w-[80px] leading-tight">
-                              {feature.split(' ').slice(0, 2).join(' ')}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
+                {/* (Removed the old hard-coded highlights bar — it duplicated the
+                    Features & Equipment grid and showed generic features that
+                    weren't always on the actual vehicle.) */}
               </div>
 
               {/* Pill Navigation */}
@@ -1185,36 +1226,51 @@ export default function CarDetails() {
                 </div>
               </div>
 
+              {/* Quick spec strip — at-a-glance key specs with icons */}
+              <div className="mb-10">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {[
+                    { icon: Gauge, label: 'Kilometres', value: car.mileage ? `${Number(car.mileage).toLocaleString()} km` : '—' },
+                    { icon: Compass, label: 'Drivetrain', value: car.drivetrain || '—' },
+                    { icon: Settings2, label: 'Transmission', value: car.transmission || '—' },
+                    { icon: Zap, label: 'Engine', value: car.engine || (car.engineSize ? `${car.engineSize}L` : '—') },
+                    { icon: Fuel, label: 'Fuel', value: car.fuelType || '—' },
+                    { icon: Armchair, label: 'Seats', value: car.seats ? `${car.seats}` : '—' },
+                  ].map((s, i) => (
+                    <div key={i} className="bg-white border border-slate-100 rounded-2xl px-4 py-3.5 flex items-center gap-3 shadow-sm">
+                      <div className="w-9 h-9 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center flex-shrink-0">
+                        <s.icon className="w-[18px] h-[18px]" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[15px] font-bold text-slate-900 tracking-tight truncate">{s.value}</div>
+                        <div className="text-[11px] text-slate-400 font-semibold">{s.label}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {/* Detailed Specifications Card */}
               <div ref={specsRef} id="specifications" className="scroll-mt-32 mb-12">
-                <div className="bg-white p-5 md:p-8 rounded-3xl border border-slate-100 shadow-sm">
-                  <h2 className="text-[18px] md:text-[24px] font-bold text-slate-900 mb-8 font-display">Detailed Specifications</h2>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-12 gap-y-2">
+                <div className="bg-white p-5 md:p-6 rounded-3xl border border-slate-100 shadow-sm">
+                  <h2 className="text-[13px] font-bold text-slate-500 uppercase tracking-[0.14em] mb-4">Vehicle Details</h2>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-1">
                     {[
-                      { label: 'Stock Number', value: car.stockNumber || (car as any).stockId || car.id.split('-').pop()?.toUpperCase() || car.id.slice(-6).toUpperCase() },
+                      { label: 'Stock #', value: car.stockNumber || (car as any).stockId || car.id.split('-').pop()?.toUpperCase() || car.id.slice(-6).toUpperCase() },
                       { label: 'VIN', value: car.vin },
-                      { label: 'Mileage', value: car.mileage ? `${Number(car.mileage).toLocaleString()} km` : 'N/A' },
-                      { label: 'Year', value: car.year },
-                      { label: 'Make', value: car.make },
-                      { label: 'Model', value: car.model },
-                      { label: 'Engine', value: car.engine || (car.engineSize ? `${car.engineSize}L ${car.cylinders ? car.cylinders + 'Cyl' : ''}` : 'N/A') },
-                      { label: 'Transmission', value: car.transmission },
-                      { label: 'Drive', value: car.drivetrain },
-                      { label: 'Fuel', value: car.fuelType },
-                      { label: 'Type', value: car.bodyStyle },
-                      { label: 'Seats', value: car.seats ? `${car.seats} seats` : 'N/A' },
-                      { label: 'Color', value: car.exteriorColor, isColor: true },
+                      { label: 'Body Type', value: car.bodyStyle },
+                      { label: 'Exterior Color', value: car.exteriorColor, isColor: true },
                     ].map((spec, idx) => (
-                      <div key={idx} className="py-4 border-b border-slate-50 last:border-0">
-                        <span className="block text-[12px] text-slate-400 font-bold uppercase tracking-wider mb-1">{spec.label}</span>
+                      <div key={idx} className="py-2.5 border-b border-slate-50 last:border-0 md:border-0">
+                        <span className="block text-[11px] text-slate-400 font-bold uppercase tracking-wider mb-0.5">{spec.label}</span>
                         <div className="flex items-center gap-2">
                           {spec.isColor && (
-                            <div 
-                              className="h-3 w-3 rounded-full border border-slate-200 flex-shrink-0" 
-                              style={{ backgroundColor: spec.value?.toLowerCase() || 'transparent' }} 
+                            <div
+                              className="h-3 w-3 rounded-full border border-slate-200 flex-shrink-0"
+                              style={{ backgroundColor: spec.value?.toLowerCase() || 'transparent' }}
                             />
                           )}
-                          <span className="text-[16px] font-bold text-slate-900 tracking-tight break-all" title={spec.value || '-'}>
+                          <span className="text-[14px] font-bold text-slate-900 tracking-tight break-all" title={spec.value || '-'}>
                             {spec.value || '-'}
                           </span>
                         </div>
@@ -1231,31 +1287,31 @@ export default function CarDetails() {
                     <div className="flex justify-between items-center mb-10">
                       <div>
                         <h2 className="text-[24px] md:text-[32px] font-bold text-slate-900 font-display tracking-tight">Features & Equipment</h2>
-                        <p className="text-slate-400 text-sm mt-1">Detailed specifications and installed options</p>
+                        <p className="text-slate-400 text-sm mt-1">Everything this vehicle comes equipped with</p>
                       </div>
                       {loadingFeatures && <Loader2 className="w-5 h-5 animate-spin text-brand-primary" />}
                     </div>
                     
                     {hasAnyFeatures ? (
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-16 gap-y-12">
+                     <div className="space-y-9">
                       {/* Safety & Driver Assist */}
                       {categorizedFeatures?.safetyAndSecurity && categorizedFeatures.safetyAndSecurity.length > 0 && (
                         <div className="group">
-                          <h3 className="text-[12px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-7 flex items-center gap-3 border-b border-slate-50 pb-3">
+                          <h3 className="text-[12px] font-bold text-slate-500 uppercase tracking-[0.14em] mb-4 flex items-center gap-2.5">
                             <div className="p-2 bg-blue-50 rounded-xl group-hover:bg-blue-100 transition-colors">
                               <ShieldCheck className="w-4 h-4 text-blue-600" />
                             </div>
                             Safety & Driver Assist
                           </h3>
-                          <div className="grid grid-cols-1 gap-4">
+                          <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5">
                             {categorizedFeatures.safetyAndSecurity.map((feature, i) => {
                               const Icon = getFeatureIcon(feature);
                               return (
-                                <div key={i} className="flex items-center gap-4 group/item">
-                                  <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center flex-shrink-0 group-hover/item:bg-white group-hover/item:shadow-sm transition-all">
-                                    <Icon className="w-4 h-4 text-slate-400 group-hover/item:text-blue-500" />
+                                <div key={i} className="flex items-center gap-3 p-3 border border-slate-100 rounded-xl bg-white hover:shadow-md hover:border-slate-200 transition-all">
+                                  <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center flex-shrink-0">
+                                    <Icon className="w-[18px] h-[18px] text-violet-600" />
                                   </div>
-                                  <span className="text-[15px] font-semibold text-slate-600 tracking-tight">{feature}</span>
+                                  <span className="text-[13px] font-semibold text-slate-700 leading-tight">{feature}</span>
                                 </div>
                               );
                             })}
@@ -1266,21 +1322,21 @@ export default function CarDetails() {
                       {/* Comfort & Interior */}
                       {categorizedFeatures?.comfortAndConvenience && categorizedFeatures.comfortAndConvenience.length > 0 && (
                         <div className="group">
-                          <h3 className="text-[12px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-7 flex items-center gap-3 border-b border-slate-50 pb-3">
+                          <h3 className="text-[12px] font-bold text-slate-500 uppercase tracking-[0.14em] mb-4 flex items-center gap-2.5">
                             <div className="p-2 bg-indigo-50 rounded-xl group-hover:bg-indigo-100 transition-colors">
                               <Armchair className="w-4 h-4 text-indigo-600" />
                             </div>
                             Comfort & Interior
                           </h3>
-                          <div className="grid grid-cols-1 gap-4">
+                          <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5">
                             {categorizedFeatures.comfortAndConvenience.map((feature, i) => {
                               const Icon = getFeatureIcon(feature);
                               return (
-                                <div key={i} className="flex items-center gap-4 group/item">
-                                  <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center flex-shrink-0 group-hover/item:bg-white group-hover/item:shadow-sm transition-all">
-                                    <Icon className="w-4 h-4 text-slate-400 group-hover/item:text-indigo-500" />
+                                <div key={i} className="flex items-center gap-3 p-3 border border-slate-100 rounded-xl bg-white hover:shadow-md hover:border-slate-200 transition-all">
+                                  <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center flex-shrink-0">
+                                    <Icon className="w-[18px] h-[18px] text-violet-600" />
                                   </div>
-                                  <span className="text-[15px] font-semibold text-slate-600 tracking-tight">{feature}</span>
+                                  <span className="text-[13px] font-semibold text-slate-700 leading-tight">{feature}</span>
                                 </div>
                               );
                             })}
@@ -1291,21 +1347,21 @@ export default function CarDetails() {
                       {/* Tech & Infotainment */}
                       {categorizedFeatures?.entertainmentAndMedia && categorizedFeatures.entertainmentAndMedia.length > 0 && (
                         <div className="group">
-                          <h3 className="text-[12px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-7 flex items-center gap-3 border-b border-slate-50 pb-3">
+                          <h3 className="text-[12px] font-bold text-slate-500 uppercase tracking-[0.14em] mb-4 flex items-center gap-2.5">
                             <div className="p-2 bg-purple-50 rounded-xl group-hover:bg-purple-100 transition-colors">
                               <Smartphone className="w-4 h-4 text-purple-600" />
                             </div>
                             Tech & Infotainment
                           </h3>
-                          <div className="grid grid-cols-1 gap-4">
+                          <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5">
                             {categorizedFeatures.entertainmentAndMedia.map((feature, i) => {
                               const Icon = getFeatureIcon(feature);
                               return (
-                                <div key={i} className="flex items-center gap-4 group/item">
-                                  <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center flex-shrink-0 group-hover/item:bg-white group-hover/item:shadow-sm transition-all">
-                                    <Icon className="w-4 h-4 text-slate-400 group-hover/item:text-purple-500" />
+                                <div key={i} className="flex items-center gap-3 p-3 border border-slate-100 rounded-xl bg-white hover:shadow-md hover:border-slate-200 transition-all">
+                                  <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center flex-shrink-0">
+                                    <Icon className="w-[18px] h-[18px] text-violet-600" />
                                   </div>
-                                  <span className="text-[15px] font-semibold text-slate-600 tracking-tight">{feature}</span>
+                                  <span className="text-[13px] font-semibold text-slate-700 leading-tight">{feature}</span>
                                 </div>
                               );
                             })}
@@ -1316,21 +1372,21 @@ export default function CarDetails() {
                       {/* Performance & Mechanical */}
                       {categorizedFeatures?.extrasAndPackages && categorizedFeatures.extrasAndPackages.length > 0 && (
                         <div className="group">
-                          <h3 className="text-[12px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-7 flex items-center gap-3 border-b border-slate-50 pb-3">
+                          <h3 className="text-[12px] font-bold text-slate-500 uppercase tracking-[0.14em] mb-4 flex items-center gap-2.5">
                             <div className="p-2 bg-slate-100 rounded-xl group-hover:bg-slate-200 transition-colors">
                               <Settings2 className="w-4 h-4 text-slate-600" />
                             </div>
-                            Performance & Mechanical
+                            Additional Features
                           </h3>
-                          <div className="grid grid-cols-1 gap-4">
+                          <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5">
                             {categorizedFeatures.extrasAndPackages.map((feature, i) => {
                               const Icon = getFeatureIcon(feature);
                               return (
-                                <div key={i} className="flex items-center gap-4 group/item">
-                                  <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center flex-shrink-0 group-hover/item:bg-white group-hover/item:shadow-sm transition-all">
-                                    <Icon className="w-4 h-4 text-slate-400 group-hover/item:text-slate-600" />
+                                <div key={i} className="flex items-center gap-3 p-3 border border-slate-100 rounded-xl bg-white hover:shadow-md hover:border-slate-200 transition-all">
+                                  <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center flex-shrink-0">
+                                    <Icon className="w-[18px] h-[18px] text-violet-600" />
                                   </div>
-                                  <span className="text-[15px] font-semibold text-slate-600 tracking-tight">{feature}</span>
+                                  <span className="text-[13px] font-semibold text-slate-700 leading-tight">{feature}</span>
                                 </div>
                               );
                             })}
@@ -1394,7 +1450,7 @@ export default function CarDetails() {
                       asChild
                       className="w-full h-14 rounded-xl bg-[#7380FF] hover:bg-[#5e41cc] text-white font-bold text-[18px] shadow-lg shadow-[#7380FF]/20 transition-all active:scale-[0.98]"
                     >
-                      <Link to={`/financing?vehicleId=${car.id}&make=${car.make}&model=${car.model}&year=${car.year}`}>
+                      <Link to={`/apply-now?vehicleId=${car.id}&make=${car.make}&model=${car.model}&year=${car.year}`}>
                         Get Pre-Approved
                       </Link>
                     </Button>
@@ -1551,7 +1607,7 @@ export default function CarDetails() {
                 car.status === 'For Sale' ? "bg-[#7380FF] hover:bg-[#41456B] text-white shadow-[#7380FF]/20" : "bg-slate-100 text-slate-400 shadow-none cursor-not-allowed"
               )}
             >
-              <Link to={car.status === 'For Sale' ? `/financing?vehicleId=${car.id}&make=${car.make}&model=${car.model}&year=${car.year}` : "#"}>
+              <Link to={car.status === 'For Sale' ? `/apply-now?vehicleId=${car.id}&make=${car.make}&model=${car.model}&year=${car.year}` : "#"}>
                 {car.status === 'Sold' ? 'Sold' : car.status === 'Pending Sale' ? 'Pending Sale' : 'Get Approved'}
               </Link>
             </Button>
