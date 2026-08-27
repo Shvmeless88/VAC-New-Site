@@ -141,6 +141,29 @@ export default function Admin() {
     if (theme === 'dark') root.classList.add('dark'); else root.classList.remove('dark');
     return () => { root.classList.remove('dark'); };
   }, [theme]);
+  // The GTM-injected customer chatbot floats an invisible max-z iframe over the
+  // bottom-right corner, swallowing clicks (e.g. the CRM composer's Note/Text/Email
+  // toggle). A stylesheet rule loses to the widget's own CSS, so force inline styles
+  // and re-apply if the widget re-injects. The public site keeps its chatbot.
+  useEffect(() => {
+    const sel = 'iframe[title="Chatbot" i]';
+    const hide = () => {
+      document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
+        el.style.setProperty('display', 'none', 'important');
+        el.style.setProperty('pointer-events', 'none', 'important');
+      });
+    };
+    hide();
+    const obs = new MutationObserver(hide);
+    obs.observe(document.body, { childList: true, subtree: false });
+    const iv = window.setInterval(hide, 3000);
+    return () => {
+      obs.disconnect(); window.clearInterval(iv);
+      document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
+        el.style.removeProperty('display'); el.style.removeProperty('pointer-events');
+      });
+    };
+  }, []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try { return localStorage.getItem('vac_admin_sidebar_collapsed') === '1'; } catch { return false; }
   });

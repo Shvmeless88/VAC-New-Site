@@ -20,6 +20,26 @@ export default function CrmInbox() {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const [assigning, setAssigning] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+
+  // Pull each inbox lead's owner from Pipedrive (round-robin) and merge duplicates
+  // into their phone-keyed record. Useful during the parallel period.
+  const syncFromPipedrive = async () => {
+    if (!window.confirm('Sync the Inbox with Pipedrive?\n\nLeads already dispersed in Pipedrive move to that rep’s board, duplicates merge into one record, and archived test leads are removed.')) return;
+    setSyncing(true); setSyncMsg(null);
+    try {
+      const res = await fetch('/api/crm/pipedrive-import', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await token()}` },
+        body: JSON.stringify({ phase: 'reconcile-inbox', confirm: true }),
+      });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || 'Sync failed.');
+      setSyncMsg(`Done — ${j.assigned} assigned to reps, ${j.merged} duplicate${j.merged === 1 ? '' : 's'} merged, ${j.deletedJunk} removed, ${j.keptInbox} kept in the inbox.`);
+      await load();
+    } catch (e: any) { setSyncMsg(e.message || 'Sync failed.'); }
+    setSyncing(false);
+  };
 
   const load = useCallback(async () => {
     const res = await fetch('/api/crm/leads', { headers: { Authorization: `Bearer ${await token()}` } });
@@ -63,12 +83,20 @@ export default function CrmInbox() {
           </h1>
           <p className="text-[13px] text-gray-500 mt-1.5">New website leads waiting to be assigned. Reps don’t see these until you disperse them.</p>
         </div>
-        <div className="relative w-full lg:w-80">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, phone, email, city…"
-            className="w-full h-10 rounded-xl border border-gray-200 bg-white pl-9 pr-3 text-sm text-brand-primary" />
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto">
+          <button onClick={syncFromPipedrive} disabled={syncing}
+            className="h-10 shrink-0 rounded-xl bg-brand-accent text-white text-[13px] font-bold px-4 inline-flex items-center justify-center gap-2 hover:opacity-90 transition disabled:opacity-60">
+            {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+            {syncing ? 'Syncing…' : 'Sync owners from Pipedrive'}
+          </button>
+          <div className="relative w-full lg:w-80">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, phone, email, city…"
+              className="w-full h-10 rounded-xl border border-gray-200 bg-white pl-9 pr-3 text-sm text-brand-primary" />
+          </div>
         </div>
       </header>
+      {syncMsg && <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[13px] font-semibold text-emerald-800">{syncMsg}</div>}
 
       {filtered.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-12 text-center">

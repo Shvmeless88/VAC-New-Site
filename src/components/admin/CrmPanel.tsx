@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type FC, type ChangeEvent } from 'react';
 import { auth } from '@/lib/firebase';
-import { Loader2, User, X, Circle, Users, Filter, Search, Power, LayoutGrid, List, Send, Pencil, Phone, ArrowUp, ArrowDown, ArrowUpDown, ImagePlus, Plus, Mail, Trash2, Car } from 'lucide-react';
+import { Loader2, User, X, Circle, Users, Filter, Search, Power, LayoutGrid, List, Send, Pencil, Phone, ArrowUp, ArrowDown, ArrowUpDown, ImagePlus, Plus, Mail, Trash2, Car, RefreshCw } from 'lucide-react';
 
 // A crmLeads record — our own copy of a Pipedrive lead (clean schema).
 type CrmLead = {
@@ -621,7 +621,17 @@ function Detail({ lead, stages, reps, onClose, onUpdate, onSendText, onSendEmail
                     {t.kind === 'call' && <span className="inline-block mb-1 text-[9px] font-bold uppercase tracking-wide px-1.5 py-[2px] rounded bg-blue-50 text-blue-600">Call</span>}
                     {t.kind === 'recording' && <span className="inline-block mb-1 text-[9px] font-bold uppercase tracking-wide px-1.5 py-[2px] rounded bg-indigo-50 text-indigo-600">Recording</span>}
                     {t.kind === 'note' && <span className="inline-block mb-1 text-[9px] font-bold uppercase tracking-wide px-1.5 py-[2px] rounded bg-slate-100 text-slate-500">Note</span>}
-                    <p className="text-[13px] text-brand-primary whitespace-pre-wrap leading-snug break-words">{body}</p>
+                    {(() => {
+                      const recUrl = t.kind === 'recording' ? String((t as any).recording || (String(body || '').match(/https?:\/\/[^\s]+/) || [])[0] || '') : '';
+                      if (recUrl) return (
+                        <div>
+                          <p className="text-[13px] font-semibold text-brand-primary leading-snug">📼 Call recording</p>
+                          <audio controls preload="none" src={recUrl} className="mt-2 w-full max-w-md" style={{ height: 36 }} />
+                          <a href={recUrl} target="_blank" rel="noreferrer" className="inline-block mt-1 text-[11px] font-bold text-indigo-600 hover:underline">Open in new tab ↗</a>
+                        </div>
+                      );
+                      return <p className="text-[13px] text-brand-primary whitespace-pre-wrap leading-snug break-words">{body}</p>;
+                    })()}
                     {media.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2">
                         {media.map((u: string, mi: number) => {
@@ -730,6 +740,7 @@ type PoolRow = {
   lookingFor?: string | null; budget?: string | null; creditSelfRating?: string | null;
   releasedAt?: string | null; releasedFromName?: string | null; releaseStats?: any; poolNote?: string | null;
   addTime?: string | null; source?: string | null;
+  firstAppliedAt?: string | null; lastAppliedAt?: string | null; appliedMonth?: string | null; applications?: string[] | null;
 };
 const PROVINCES = ['NL', 'NS', 'NB', 'PE', 'QC', 'ON', 'MB', 'SK', 'AB', 'BC', 'YT', 'NT', 'NU'];
 const PoolView: FC<{
@@ -743,11 +754,14 @@ const PoolView: FC<{
   const [rows, setRows] = useState<PoolRow[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
+  const [totalPool, setTotalPool] = useState<number | null>(null);
+  const [filteredTotal, setFilteredTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
   const [province, setProvince] = useState('');
   const [lookingFor, setLookingFor] = useState('');
   const [credit, setCredit] = useState('');
+  const [month, setMonth] = useState('');   // YYYY-MM
   const [openLead, setOpenLead] = useState<CrmLead | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
 
@@ -760,13 +774,16 @@ const PoolView: FC<{
       if (province) params.set('province', province);
       if (lookingFor) params.set('lookingFor', lookingFor);
       if (credit) params.set('credit', credit);
+      if (month) params.set('month', month);
       const res = await fetch(`/api/crm/pool?${params}`, { headers: { Authorization: `Bearer ${await token()}` } });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) { window.alert(j.error || 'Failed to load the pool.'); return; }
       setRows((prev) => (reset ? j.rows || [] : [...prev, ...(j.rows || [])]));
       setCursor(j.nextCursor || null); setHasMore(!!j.hasMore);
+      if (typeof j.totalPool === 'number') setTotalPool(j.totalPool);
+      if (typeof j.filteredTotal === 'number') setFilteredTotal(j.filteredTotal);
     } finally { setLoading(false); }
-  }, [q, province, lookingFor, credit]);
+  }, [q, province, lookingFor, credit, month]);
 
   // Debounced search / filter changes reset the list.
   useEffect(() => { const t = setTimeout(() => fetchPage(true, null), 350); return () => clearTimeout(t); }, [fetchPage]);
@@ -792,8 +809,14 @@ const PoolView: FC<{
     <div>
       <header className="flex items-center gap-3 mb-4 flex-wrap">
         <div className="shrink-0">
-          <h1 className="text-2xl font-display font-bold text-brand-primary leading-none tracking-tight flex items-center gap-2"><Power className="h-5 w-5 text-orange-500" />Free to Call Pool</h1>
-          <p className="text-[13px] text-gray-500 mt-1.5">Unassigned leads anyone can claim — reach the customer and it's yours.</p>
+          <h1 className="text-2xl font-display font-bold text-brand-primary leading-none tracking-tight flex items-center gap-2">
+            <Power className="h-5 w-5 text-orange-500" />Free to Call Pool
+            {totalPool != null && <span className="text-[13px] font-bold text-orange-700 bg-orange-100 rounded-full px-2.5 py-1 ml-1">{totalPool.toLocaleString('en-CA')} in pool</span>}
+          </h1>
+          <p className="text-[13px] text-gray-500 mt-1.5">
+            Unassigned leads anyone can claim — reach the customer and it's yours.
+            {filteredTotal != null && totalPool != null && filteredTotal !== totalPool && <span className="ml-1 font-semibold text-brand-primary">{filteredTotal.toLocaleString('en-CA')} match your filters.</span>}
+          </p>
         </div>
         <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-brand-accent/70" />
@@ -809,6 +832,20 @@ const PoolView: FC<{
         <select value={credit} onChange={(e) => setCredit(e.target.value)} className={sel}>
           <option value="">Any credit</option>{['Excellent', 'Very good', 'Good', 'Fair', 'Poor', 'No credit / unsure'].map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
+        <div className={`${sel} inline-flex items-center gap-1.5 pr-1.5`} title="Show everyone who applied in a given month">
+          <span className="text-gray-400 text-[11px] font-bold uppercase tracking-wide mr-1">Applied</span>
+          <select value={month ? month.slice(5, 7) : ''} onChange={(e) => { const m = e.target.value; const y = month ? month.slice(0, 4) : String(new Date().getFullYear()); setMonth(m ? `${y}-${m}` : ''); }}
+            className="bg-transparent outline-none text-[13px] font-semibold text-brand-primary cursor-pointer">
+            <option value="">Month</option>
+            {['01','02','03','04','05','06','07','08','09','10','11','12'].map((m, i) => <option key={m} value={m}>{['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i]}</option>)}
+          </select>
+          <select value={month ? month.slice(0, 4) : ''} onChange={(e) => { const y = e.target.value; const m = month ? month.slice(5, 7) : '01'; setMonth(y ? `${y}-${m}` : ''); }}
+            className="bg-transparent outline-none text-[13px] font-semibold text-brand-primary cursor-pointer">
+            <option value="">Year</option>
+            {Array.from({ length: new Date().getFullYear() - 2020 + 1 }, (_, i) => String(new Date().getFullYear() - i)).map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+          {month && <button onClick={() => setMonth('')} className="text-gray-400 hover:text-gray-600 ml-0.5" title="Clear">×</button>}
+        </div>
       </header>
 
       {loading && rows.length === 0 ? (
@@ -829,6 +866,7 @@ const PoolView: FC<{
                   <th className="px-4 py-3 font-bold">Credit</th>
                   <th className="px-4 py-3 font-bold">Phone</th>
                   <th className="px-4 py-3 font-bold">Location</th>
+                  <th className="px-4 py-3 font-bold" title="When they applied (month/year). Multiple dates = applied more than once.">Applied</th>
                   <th className="px-4 py-3 font-bold">Previously with</th>
                   <th className="px-4 py-3 font-bold">In pool</th>
                   <th className="px-4 py-3 font-bold"></th>
@@ -848,6 +886,12 @@ const PoolView: FC<{
                       <td className="px-4 py-3 whitespace-nowrap text-gray-600">{r.creditSelfRating || '—'}</td>
                       <td className="px-4 py-3 whitespace-nowrap text-gray-600">{r.phone || '—'}</td>
                       <td className="px-4 py-3 whitespace-nowrap text-gray-600">{[r.city, r.province].filter(Boolean).join(', ') || '—'}</td>
+                      <td className="px-4 py-3 whitespace-nowrap text-gray-600">{(() => {
+                        const fmtM = (iso?: string | null) => { try { return iso ? new Date(iso).toLocaleDateString('en-CA', { month: 'short', year: 'numeric' }) : null; } catch { return null; } };
+                        const apps = Array.isArray(r.applications) && r.applications.length ? r.applications : [r.firstAppliedAt || r.addTime];
+                        const labels = Array.from(new Set(apps.map(fmtM).filter(Boolean))) as string[];
+                        return labels.length ? (<span>{labels[0]}{labels.length > 1 && <span className="text-gray-400"> · +{labels.length - 1} more</span>}</span>) : '—';
+                      })()}</td>
                       <td className="px-4 py-3 whitespace-nowrap text-gray-600">{r.releasedFromName || '—'}{mine && <span className="ml-1.5 text-[9.5px] font-bold uppercase px-1.5 py-[2px] rounded bg-gray-100 text-gray-500">you</span>}</td>
                       <td className="px-4 py-3 whitespace-nowrap text-gray-500">{d == null ? '—' : d === 0 ? 'today' : d >= 60 ? `${Math.round(d / 30)} mo` : `${d}d`}</td>
                       <td className="px-4 py-3 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
@@ -869,7 +913,7 @@ const PoolView: FC<{
                 className="h-10 px-5 rounded-xl border border-gray-200 bg-white text-sm font-bold text-brand-primary hover:border-brand-accent disabled:opacity-40 inline-flex items-center gap-2">
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Load 50 more
               </button>
-            ) : <p className="text-[12px] text-gray-400">Showing all {rows.length} matching leads.</p>}
+            ) : <p className="text-[12px] text-gray-400">Showing all {(filteredTotal ?? rows.length).toLocaleString('en-CA')} matching leads.</p>}
           </div>
         </>
       )}
@@ -1141,6 +1185,8 @@ export default function CrmPanel({ role, mode = 'crm' }: { role?: string; mode?:
   const [ownerFilter, setOwnerFilter] = useState<string>('all'); // 'all' | a rep id
   const [q, setQ] = useState('');
   const [dragId, setDragId] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [lostPrompt, setLostPrompt] = useState<{ id: string; reason?: string; date?: string; noFollowUp?: boolean; note?: string } | null>(null);
   const [showNewLead, setShowNewLead] = useState(false);
   const [view, setView] = useState<'board' | 'list'>('board');
@@ -1278,6 +1324,14 @@ export default function CrmPanel({ role, mode = 'crm' }: { role?: string; mode?:
       .filter((l) => (ownerFilter === 'all' ? true : (l.owner || '') === ownerFilter))
       .filter(matchesQ)
       .forEach((l) => { const k = l.stage || 'new_lead'; (map[k] = map[k] || []).push(l); });
+    // Attempting Contact: oldest first (Day 3 at the top) — the ones about to hit the pool need eyes first.
+    if (map['attempting_contact']) {
+      const enteredAt = (l: CrmLead) => {
+        const hist = (l as any).stageHistory as { to?: string; at?: string }[] | undefined;
+        return (l as any).attemptingSince || (hist ? hist.find((h) => h.to === 'attempting_contact')?.at : undefined) || l.addTime || '';
+      };
+      map['attempting_contact'].sort((a, b) => String(enteredAt(a)).localeCompare(String(enteredAt(b))));
+    }
     return map;
   }, [leads, stages, ownerFilter, q]);
 
@@ -1328,6 +1382,23 @@ export default function CrmPanel({ role, mode = 'crm' }: { role?: string; mode?:
       const r = reps.find((x) => x.id === repId); if (!r) return;
       await updateLead(l.id, { owner: r.id, ownerName: r.name });
     };
+    // Pull each inbox lead's owner from Pipedrive (round-robin) and merge duplicates
+    // into their phone-keyed record. Useful during the parallel period.
+    const syncFromPipedrive = async () => {
+      if (!window.confirm('Sync the Inbox with Pipedrive?\n\nLeads already dispersed in Pipedrive move to that rep’s board, duplicates merge into one record, and archived test leads are removed.')) return;
+      setSyncing(true); setSyncMsg(null);
+      try {
+        const res = await fetch('/api/crm/pipedrive-import', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await token()}` },
+          body: JSON.stringify({ phase: 'reconcile-inbox', confirm: true }),
+        });
+        const j = await res.json();
+        if (!res.ok || !j.ok) throw new Error(j.error || 'Sync failed.');
+        setSyncMsg(`Done — ${j.assigned} assigned to reps, ${j.merged} duplicate${j.merged === 1 ? '' : 's'} merged, ${j.deletedJunk} removed, ${j.keptInbox} kept in the inbox.`);
+        await load();
+      } catch (e: any) { setSyncMsg(e.message || 'Sync failed.'); }
+      setSyncing(false);
+    };
     return (
       <div>
         <header className="flex items-center gap-3 mb-4 flex-wrap">
@@ -1340,7 +1411,13 @@ export default function CrmPanel({ role, mode = 'crm' }: { role?: string; mode?:
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, phone, email, city…"
               className="w-full h-10 rounded-full border border-gray-200 bg-white pl-10 pr-4 text-sm text-brand-primary shadow-sm outline-none transition focus:border-brand-accent focus:ring-2 focus:ring-brand-accent/20" />
           </div>
+          <button onClick={syncFromPipedrive} disabled={syncing}
+            className="h-10 shrink-0 rounded-full bg-brand-accent text-white text-[13px] font-bold px-4 inline-flex items-center justify-center gap-2 shadow-sm hover:opacity-90 transition disabled:opacity-60">
+            {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {syncing ? 'Syncing…' : 'Sync owners from Pipedrive'}
+          </button>
         </header>
+        {syncMsg && <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[13px] font-semibold text-emerald-800">{syncMsg}</div>}
         {inboxLeads.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-12 text-center">
             <p className="text-gray-500 font-medium">Inbox is clear.</p>

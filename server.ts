@@ -2493,11 +2493,27 @@ async function startServer() {
           source: "apply-now",
           updatedAt: nowIso,
         };
-        const docRef = leadId ? db.collection("crmLeads").doc(String(leadId)) : db.collection("crmLeads").doc();
+        // Key by phone (pd_<last10>) so a returning applicant merges into their one
+        // record — same key the Pipedrive archive import uses. Lead-id keying only
+        // when there's no usable phone.
+        const crmPk = phoneKeyOf(phone) || "";
+        const docRef = crmPk.length === 10
+          ? db.collection("crmLeads").doc(`pd_${crmPk}`)
+          : (leadId ? db.collection("crmLeads").doc(String(leadId)) : db.collection("crmLeads").doc());
         const existingCrm = await docRef.get();
+        const prevStage = existingCrm.exists ? String(existingCrm.get("stage") || "") : "";
+        crmRecord.applications = admin.firestore.FieldValue.arrayUnion(nowIso);
+        crmRecord.lastAppliedAt = nowIso;
+        crmRecord.appliedMonth = nowIso.slice(0, 7);
+        if (!existingCrm.exists || !existingCrm.get("firstAppliedAt")) crmRecord.firstAppliedAt = nowIso;
         if (!existingCrm.exists) { crmRecord.stage = "new_lead"; crmRecord.owner = null; }
+        else if (prevStage === "free_to_call" || prevStage === "lost") {
+          // Re-application revives an archived/lost record: back to the Inbox, opted back in.
+          crmRecord.stage = "new_lead"; crmRecord.owner = null; crmRecord.dnc = false;
+          crmRecord.releasedAt = null; crmRecord.releasedFrom = null; crmRecord.releasedFromName = null;
+        }
         else if (!existingCrm.get("owner")) { crmRecord.owner = null; } // still unassigned → keep it that way
-        // (if it already has an owner, we leave stage/owner untouched)
+        // (if it already has an owner and is being worked, we leave stage/owner untouched)
         await docRef.set(crmRecord, { merge: true });
         // Phase A: auto-assign to the next active rep the instant it lands. If nobody
         // is active, it stays unassigned and waits in the Inbox.
@@ -4093,6 +4109,394 @@ async function startServer() {
         return res.json({ ok: true, entity: which, count: out.length, fields: out });
       }
 
+      // Person-record field map — from Pipedrive's own personFields definitions (verified 2026-08-19).
+      const PERSON_FIELDS: Record<string, string> = {
+        "f564e37049699ba76316ff6f3ee8e617c7a7fdd6": "applicationId",
+        "57de6657cbb5438bf5415c81185ed9c1d8121c95": "hasTradeIn",
+        "077932485b6411341a64b965700279af5d30d51f": "budget",
+        "3b7734030f22415928524281d15cf5f8ce6f0923": "lookingFor",
+        "4757bf6f166ed3386cd5438f677eca7b83c366eb": "leadSource",
+        "9a797bbab5a4a042444df34add8177fc381631eb": "origin",
+        "5a6e06b823c5589dc1b77ce42d5048d7e7abbd86": "originalOwnerName",
+        "d98856443db5ad796f3db30f3fc3fcfaa20379ef": "middleName",
+        "c30d4c12db82927b1ccbca8f31568d83fdaa6730": "maritalStatus",
+        "f2b439c28e961c4005e910571424bda14f1761e6": "dob",
+        "d98af281770daaefbf449b0f4bdb33458817ca47": "dob",
+        "841328cfd4062dbd906972658c6015930835b3af": "street",
+        "8779f4faa82a05e3a919a4259dcf96e0eba2d3c1": "street2",
+        "49f3ebc9df6d2fab9244d226164e2d63e25b4f41": "suite",
+        "f29344a1f399d9022bda870b1b9c5f2b758b9b92": "city",
+        "70eefeb850270bd6d80eaff0811c292140985d90": "province",
+        "c6cddb628024194faa1c09dae95fcdb2382a2296": "postal",
+        "09402d8f246f889cfa55ea0cfc399afbaee59575": "rentOrOwn",
+        "257a734dffa392edf80c11d8b18eb3471c9fe309": "timeAtAddress",
+        "ab55116b32183c1489740b42318780acff0738fd": "monthlyPayment",
+        "b1d7f85d70cf747c30996db9a851bf71173bb4b5": "employer",
+        "a17ab1ddd560ec0404d223684c029ed42cec9246": "jobTitle",
+        "d3eb13a75eee18315c55a09a8b8fbaab64c40d6e": "employmentStatus",
+        "ab4fa09ab649c8684be5cb23da85ad429ea58d29": "employmentYears",
+        "8d2c21ebdaa2481cb76189b9ad35715d5be069c4": "employmentMonths",
+        "86ee0c72853df9212222bb47b8f26b9597576d68": "monthlyIncome",
+        "c58ce27ae7d66d9c62c54bc0db508809d0651b32": "otherIncome",
+        "2762ff86001af9fb9dc29bd79ee16aeb1f5317e7": "campaign",
+        "71b27db3baa67c17e8342999bdc0a91eae1f5733": "appStatus",
+      };
+      const SKIP_PERSON_KEYS = new Set(["7978ffd789b532fde20a7464620c7fec010bb7b3"]);   // SIN — never import
+
+      if (phase === "persons-peek") {
+        // Diagnostic: show the raw shape of one person from the LIST endpoint (differs from single-get).
+        const j = await pdFetch(`/persons?limit=2`);
+        const first = (j.data || [])[0] || {};
+        const shape: any = {};
+        for (const [k, v] of Object.entries(first)) shape[k] = Array.isArray(v) ? `array(${v.length})` : (v && typeof v === "object" ? `object(${Object.keys(v as any).slice(0, 6).join(",")})` : typeof v === "string" ? (v as string).slice(0, 40) : v);
+        return res.json({ ok: true, keys: Object.keys(first), shape, pagination: j.additional_data, rawFirst: first });
+      }
+
+      if (phase === "wipe-imported") {
+        // Remove ONLY pipedrive-import docs (re-import after a mapping fix). Never touches real leads.
+        if (!req.body?.confirm) return res.status(400).json({ error: "Pass confirm:true." });
+        let removed = 0;
+        while (true) {
+          const snap = await db.collection("crmLeads").where("source", "==", "pipedrive-import").limit(400).get();
+          if (snap.empty) break;
+          const b = db.batch(); snap.docs.forEach((d: any) => b.delete(d.ref)); await b.commit(); removed += snap.size;
+          if (removed > 200000) break;
+        }
+        return res.json({ ok: true, removed });
+      }
+
+      if (phase === "wipe-stubs") {
+        // Safety net: delete any lead with no name, no phone and no email (can never be worked).
+        if (!req.body?.confirm) return res.status(400).json({ error: "Pass confirm:true." });
+        let removed = 0;
+        const snap = await db.collection("crmLeads").get();
+        let b = db.batch(); let ops = 0;
+        for (const d of snap.docs) {
+          const x = d.data() || {};
+          if (!x.firstName && !x.lastName && !x.title && !x.phone && !x.email) { b.delete(d.ref); ops++; removed++; if (ops >= 400) { await b.commit(); b = db.batch(); ops = 0; } }
+        }
+        if (ops) await b.commit();
+        return res.json({ ok: true, removed });
+      }
+
+      if (phase === "reconcile-inbox") {
+        // Dual-write docs used to be keyed by Pipedrive lead id (uuid), so a recent
+        // applicant could exist twice (uuid Inbox doc + pd_<phone> archive doc) and the
+        // round-robin owner Pipedrive gave the lead never reached the CRM. For every
+        // unassigned new_lead NOT keyed pd_/pp_: look up the Pipedrive lead, merge the
+        // doc into the phone-keyed record (fresh data wins), adopt the owner when it
+        // maps to a rep, and delete the duplicate. Dry run unless confirm:true.
+        const dry = !req.body?.confirm;
+        const repsSnap = await db.collection("crmReps").get();
+        const byPdUser = new Map<string, { id: string; name: string }>();
+        repsSnap.docs.forEach((d: any) => { const pid = d.get("pipedriveOwnerId"); if (pid) byPdUser.set(String(pid), { id: d.id, name: d.get("name") || d.id }); });
+        const NO_COPY = new Set(["stage", "owner", "ownerName", "assignedAt", "releasedAt", "releasedFrom", "releasedFromName", "dnc", "dncReason", "attemptingSince", "activityLog", "notes", "applications", "firstAppliedAt", "source", "stageHistory"]);
+        const snap = await db.collection("crmLeads").where("stage", "==", "new_lead").get();
+        const rows: any[] = []; let assigned = 0, merged = 0, deletedJunk = 0, keptInbox = 0;
+        for (const d of snap.docs) {
+          if (/^(pd_|pp_)/.test(d.id)) continue;          // already phone/person-keyed
+          if (d.get("owner")) continue;                    // already being worked — hands off
+          const x: any = d.data() || {};
+          let pdLead: any = null;
+          try { const j = await pdFetch(`/leads/${d.id}`); pdLead = j?.data || null; } catch { pdLead = null; }
+          const rep = pdLead?.owner_id ? byPdUser.get(String(pdLead.owner_id)) : null;
+          const row: any = { id: d.id, name: [x.firstName, x.lastName].filter(Boolean).join(" ").trim(), pdOwner: pdLead ? (pdLead.owner_id ?? null) : "LEAD GONE", rep: rep?.name || null, archived: !!pdLead?.is_archived };
+          if (dry) { rows.push(row); continue; }
+          if (pdLead?.is_archived) { await d.ref.delete(); deletedJunk++; row.action = "deleted (archived in Pipedrive)"; rows.push(row); continue; }
+          const pk = phoneKeyOfRaw(x.phoneKey || x.phone);
+          const targetRef = pk.length === 10 ? db.collection("crmLeads").doc(`pd_${pk}`) : null;
+          const target = targetRef ? await targetRef.get() : null;
+          if (targetRef && target?.exists) {
+            // Merge the fresh application into the master record; fresh data wins over the archive.
+            const upd: any = { updatedAt: nowIso, pipedriveLeadId: d.id, source: "apply-now" };
+            for (const [k, v] of Object.entries(x)) { if (v !== null && v !== "" && !NO_COPY.has(k)) upd[k] = v; }
+            const appAt = String(x.addTime || nowIso);
+            upd.applications = admin.firestore.FieldValue.arrayUnion(appAt);
+            upd.lastAppliedAt = appAt; upd.appliedMonth = appAt.slice(0, 7);
+            if (!target.get("firstAppliedAt")) upd.firstAppliedAt = appAt;
+            for (const key of ["notes", "activityLog"]) {
+              if (Array.isArray(x[key]) && x[key].length) upd[key] = admin.firestore.FieldValue.arrayUnion(...x[key].slice(0, 400));
+            }
+            if (target.get("owner")) { row.action = `merged into ${targetRef.id} — kept ${target.get("ownerName")}'s board`; }
+            else if (rep) { Object.assign(upd, { stage: "new_lead", owner: rep.id, ownerName: rep.name, assignedAt: nowIso, dnc: false, releasedAt: null, releasedFrom: null, releasedFromName: null }); assigned++; row.action = `merged into ${targetRef.id} + assigned ${rep.name}`; }
+            else { Object.assign(upd, { stage: "new_lead", owner: null, ownerName: null, dnc: false, releasedAt: null, releasedFrom: null, releasedFromName: null }); keptInbox++; row.action = `merged into ${targetRef.id} — inbox`; }
+            await targetRef.set(upd, { merge: true });
+            await d.ref.delete(); merged++;
+          } else if (targetRef) {
+            // No archive record — rekey to pd_<phone> so future applications merge here.
+            const data: any = { ...x, pipedriveLeadId: d.id, updatedAt: nowIso };
+            if (rep) { Object.assign(data, { owner: rep.id, ownerName: rep.name, assignedAt: nowIso }); assigned++; row.action = `rekeyed to ${targetRef.id} + assigned ${rep.name}`; }
+            else { keptInbox++; row.action = `rekeyed to ${targetRef.id} — inbox`; }
+            await targetRef.set(data, { merge: true });
+            await d.ref.delete(); merged++;
+          } else {
+            // No usable phone — leave the doc where it is, just adopt the owner if known.
+            if (rep) { await d.ref.set({ owner: rep.id, ownerName: rep.name, assignedAt: nowIso, updatedAt: nowIso }, { merge: true }); assigned++; row.action = `assigned ${rep.name}`; }
+            else { keptInbox++; row.action = "kept in inbox"; }
+            rows.push(row); continue;
+          }
+          rows.push(row);
+        }
+        return res.json({ ok: true, dry, assigned, merged, deletedJunk, keptInbox, rows });
+      }
+
+      if (phase === "audit-deals") {
+        // Read-only check: every OPEN sales-pipeline deal added since Aug 1 must exist in
+        // the CRM on the right rep's board in the right stage. Returns mismatches only.
+        // Pass fix:true to also apply the expected owner/stage to mismatched records.
+        const fix = req.body?.fix === true;
+        const STAGE_MAP: Record<number, string> = { 35: "attempting_contact", 40: "dealertrack", 36: "approved", 37: "approved", 38: "signed", 39: "signed" };
+        const repsSnap = await db.collection("crmReps").get();
+        const byPdUser = new Map<string, { id: string; name: string }>();
+        repsSnap.docs.forEach((d: any) => { const pid = d.get("pipedriveOwnerId"); if (pid) byPdUser.set(String(pid), { id: d.id, name: d.get("name") || d.id }); });
+        const ownershipFrom = IMPORT_OWNERSHIP_FROM.slice(0, 19).replace(" ", "T").replace("T", " ");
+        const PHONE_HASH = "9902ecfb207e316c980c1264d302e7e48a86bf4a";
+        let checked = 0, matched = 0, fixed = 0, hasMore = true;
+        const mismatches: any[] = []; const unmappedOwners: any[] = [];
+        for (let p = 0; p < pages && hasMore; p++) {
+          const j = await pdFetch(`/deals?limit=${perPage}&start=${start}&status=all_not_deleted`);
+          const items: any[] = j.data || [];
+          for (const D of items) {
+            if (D.status !== "open" || Number(D.pipeline_id) !== 5) continue;
+            if (String(D.add_time || "") < ownershipFrom) continue;
+            checked++;
+            const ownerRaw: any = D.user_id ?? D.owner_id;
+            const ownerId = typeof ownerRaw === "object" ? ownerRaw?.id ?? ownerRaw?.value : ownerRaw;
+            const rep = byPdUser.get(String(ownerId));
+            const expectStage = STAGE_MAP[Number(D.stage_id)] || "attempting_contact";
+            if (!rep) { unmappedOwners.push({ deal: D.id, title: D.title, pdOwner: ownerId }); continue; }
+            // Find the CRM record: by deal id first, then by phone key, then by person id.
+            let doc: any = null;
+            const byDeal = await db.collection("crmLeads").where("pipedriveDealId", "==", String(D.id)).limit(1).get();
+            if (!byDeal.empty) doc = byDeal.docs[0];
+            if (!doc) {
+              const pk = phoneKeyOfRaw(D[PHONE_HASH]);
+              if (pk.length === 10) { const s = await db.collection("crmLeads").doc(`pd_${pk}`).get(); if (s.exists) doc = s; }
+            }
+            if (!doc) {
+              const pid = typeof D.person_id === "object" ? D.person_id?.value : D.person_id;
+              if (pid) { const s = await db.collection("crmLeads").where("pipedrivePersonId", "==", String(pid)).limit(1).get(); if (!s.empty) doc = s.docs[0]; }
+            }
+            const found = doc ? { id: doc.id, stage: doc.get("stage") || null, owner: doc.get("owner") || null, ownerName: doc.get("ownerName") || null } : null;
+            const ok = !!found && found.owner === rep.id && found.stage === expectStage;
+            if (ok) { matched++; continue; }
+            const row: any = { deal: D.id, title: D.title, pdStage: D.stage_id, expected: { rep: rep.name, stage: expectStage }, found: found ? { doc: found.id, rep: found.ownerName, stage: found.stage } : "NO CRM RECORD" };
+            if (fix && found) {
+              await db.collection("crmLeads").doc(found.id).set({
+                stage: expectStage, owner: rep.id, ownerName: rep.name,
+                assignedAt: nowIso, updatedAt: nowIso, pipedriveDealId: String(D.id),
+                releasedAt: null, releasedFrom: null, releasedFromName: null,
+                attemptingSince: expectStage === "attempting_contact" ? nowIso : null,
+              }, { merge: true });
+              row.action = "fixed"; fixed++;
+            } else if (fix && !found) {
+              // Deal exists only in Pipedrive (created after the import) — build the CRM
+              // record from the deal's own application fields. Phone-keyed only; no stubs.
+              const rec: any = {};
+              for (const [hash, name] of Object.entries(CRM_FIELDS)) {
+                const v = (D as any)[hash];
+                if (v === undefined || v === null || v === "") continue;
+                const enums = CRM_ENUMS[hash];
+                rec[name] = enums && typeof v === "number" ? (enums[v] || String(v)) : (typeof v === "object" ? (v.value ?? null) : v);
+              }
+              if (!rec.firstName && !rec.lastName && D.title) {
+                const parts = String(D.title).trim().split(/\s+/);
+                rec.firstName = parts[0]; rec.lastName = parts.slice(1).join(" ") || null;
+              }
+              const pk2 = phoneKeyOfRaw(rec.phone);
+              if (pk2.length === 10) {
+                const at = String(D.add_time || nowIso).replace(" ", "T");
+                const appliedZ = at.endsWith("Z") ? at : `${at}Z`;
+                const pid = typeof D.person_id === "object" ? D.person_id?.value : D.person_id;
+                await db.collection("crmLeads").doc(`pd_${pk2}`).set({
+                  ...rec, phoneKey: pk2,
+                  title: [rec.firstName, rec.lastName].filter(Boolean).join(" ") || D.title || null,
+                  pipedriveDealId: String(D.id), pipedrivePersonId: pid ? String(pid) : null,
+                  stage: expectStage, owner: rep.id, ownerName: rep.name, assignedAt: nowIso,
+                  attemptingSince: expectStage === "attempting_contact" ? nowIso : null,
+                  addTime: appliedZ, firstAppliedAt: appliedZ, lastAppliedAt: appliedZ,
+                  appliedMonth: appliedZ.slice(0, 7),
+                  applications: admin.firestore.FieldValue.arrayUnion(appliedZ),
+                  searchTokens: tokensFor(rec), source: "pipedrive-import", importedAt: nowIso, updatedAt: nowIso,
+                  activityLog: admin.firestore.FieldValue.arrayUnion({ text: `📥 Imported from Pipedrive as an open deal — ${rep.name}.`, by: "Pipedrive import", at: nowIso, kind: "note", pipedriveDealId: String(D.id) }),
+                }, { merge: true });
+                row.action = "created"; fixed++;
+              } else { row.action = "cannot create — deal has no phone"; }
+            }
+            mismatches.push(row);
+          }
+          hasMore = items.length >= perPage && (j.additional_data?.pagination?.more_items_in_collection ?? items.length >= perPage);
+          start += items.length;
+          if (!items.length) hasMore = false;
+        }
+        return res.json({ ok: true, fix, checked, matched, fixed, mismatches, unmappedOwners, nextStart: hasMore ? start : null, done: !hasMore });
+      }
+
+      if (phase === "audit-leads") {
+        // Pipedrive LEADS (not yet deals) dispersed to reps by the round-robin never pass
+        // through the CRM Inbox if they predate the dual-write. Walk non-archived leads
+        // created since Aug 1 owned by a mapped rep and put them on that rep's board as
+        // new_lead. Never touches a record that already has an owner (deals win), skips
+        // leads Pipedrive labels as free-to-call/not-interested. fix:true to apply.
+        const fix = req.body?.fix === true;
+        const repsSnap = await db.collection("crmReps").get();
+        const byPdUser = new Map<string, { id: string; name: string }>();
+        repsSnap.docs.forEach((d: any) => { const pid = d.get("pipedriveOwnerId"); if (pid) byPdUser.set(String(pid), { id: d.id, name: d.get("name") || d.id }); });
+        let checked = 0, matched = 0, fixed = 0, skippedPool = 0, hasMore = true;
+        const rows: any[] = [];
+        const labelName = new Map<string, string>();
+        try { const lj = await pdFetch(`/leadLabels`); (lj.data || []).forEach((x: any) => labelName.set(String(x.id), String(x.name || ""))); } catch { /* labels optional */ }
+        for (let p = 0; p < pages && hasMore; p++) {
+          const j = await pdFetch(`/leads?limit=${perPage}&start=${start}&archived_status=not_archived`);
+          const items: any[] = j.data || [];
+          for (const L of items) {
+            if (String(L.add_time || "") < IMPORT_OWNERSHIP_FROM.slice(0, 10)) continue;
+            const rep = byPdUser.get(String(L.owner_id));
+            if (!rep) continue;
+            const lNames = (Array.isArray(L.label_ids) ? L.label_ids : []).map((id: any) => labelName.get(String(id)) || "").join(", ");
+            if (/free\s*to\s*call|not\s*interested/i.test(lNames)) { skippedPool++; continue; } // Pipedrive says pool — leave it there
+            checked++;
+            // Map fields the same way the leads import does (hashes are inline on v1 leads).
+            const rec: any = {};
+            for (const [hash, name] of Object.entries(CRM_FIELDS)) {
+              const v = (L as any)[hash];
+              if (v === undefined || v === null || v === "") continue;
+              const enums = CRM_ENUMS[hash];
+              rec[name] = enums && typeof v === "number" ? (enums[v] || String(v)) : (typeof v === "object" ? (v.value ?? null) : v);
+            }
+            if (!rec.firstName && !rec.lastName && L.title) {
+              const parts = String(L.title).trim().split(/\s+/);
+              rec.firstName = parts[0]; rec.lastName = parts.slice(1).join(" ") || null;
+            }
+            const pk = phoneKeyOfRaw(rec.phone);
+            // Find the CRM record: lead id doc (legacy dual-write), pd_<phone>, then person id.
+            let doc: any = null;
+            const byLead = await db.collection("crmLeads").where("pipedriveLeadId", "==", String(L.id)).limit(1).get();
+            if (!byLead.empty) doc = byLead.docs[0];
+            if (!doc && pk.length === 10) { const s = await db.collection("crmLeads").doc(`pd_${pk}`).get(); if (s.exists) doc = s; }
+            if (!doc && L.person_id) { const s = await db.collection("crmLeads").where("pipedrivePersonId", "==", String(L.person_id)).limit(1).get(); if (!s.empty) doc = s.docs[0]; }
+            if (doc && doc.get("owner")) { matched++; continue; }   // already on a board — deals/manual state wins
+            const row: any = { lead: L.id, title: L.title, rep: rep.name, found: doc ? doc.id : "NO CRM RECORD" };
+            if (!fix) { rows.push(row); continue; }
+            if (doc) {
+              await db.collection("crmLeads").doc(doc.id).set({
+                stage: "new_lead", owner: rep.id, ownerName: rep.name, assignedAt: nowIso,
+                pipedriveLeadId: String(L.id), updatedAt: nowIso,
+                releasedAt: null, releasedFrom: null, releasedFromName: null,
+              }, { merge: true });
+              row.action = "assigned"; fixed++;
+            } else if (pk.length === 10) {
+              const at = String(L.add_time || nowIso).replace(" ", "T");
+              const appliedZ = at.endsWith("Z") ? at : `${at}Z`;
+              await db.collection("crmLeads").doc(`pd_${pk}`).set({
+                ...rec, phoneKey: pk,
+                title: [rec.firstName, rec.lastName].filter(Boolean).join(" ") || L.title || null,
+                pipedriveLeadId: String(L.id), pipedrivePersonId: L.person_id ? String(L.person_id) : null,
+                stage: "new_lead", owner: rep.id, ownerName: rep.name, assignedAt: nowIso,
+                addTime: appliedZ, firstAppliedAt: appliedZ, lastAppliedAt: appliedZ,
+                appliedMonth: appliedZ.slice(0, 7),
+                applications: admin.firestore.FieldValue.arrayUnion(appliedZ),
+                searchTokens: tokensFor(rec), source: "pipedrive-import", importedAt: nowIso, updatedAt: nowIso,
+                activityLog: admin.firestore.FieldValue.arrayUnion({ text: `📥 Imported from Pipedrive as ${rep.name}'s lead.`, by: "Pipedrive import", at: nowIso, kind: "note", pipedriveLeadId: String(L.id) }),
+              }, { merge: true });
+              row.action = "created"; fixed++;
+            } else { row.action = "cannot create — no phone"; }
+            rows.push(row);
+          }
+          hasMore = items.length >= perPage;
+          start += items.length;
+          if (!items.length) hasMore = false;
+        }
+        return res.json({ ok: true, fix, checked, matched, fixed, skippedPool, rows, nextStart: hasMore ? start : null, done: !hasMore });
+      }
+
+      if (phase === "deals-peek") {
+        // Diagnostic: the newest few deals — why aren't they mapping to owners?
+        const st = Number(req.body?.start) || 24000;
+        const j = await pdFetch(`/deals?limit=${Number(req.body?.n) || 6}&start=${st}&status=all_not_deleted`);
+        const repsSnap = await db.collection("crmReps").get();
+        const byPdUser = new Map<string, string>(); repsSnap.docs.forEach((d: any) => { const pid = d.get("pipedriveOwnerId"); if (pid) byPdUser.set(String(pid), d.get("name")); });
+        const rows = (j.data || []).map((D: any) => ({ id: D.id, title: D.title, status: D.status, pipeline_id: D.pipeline_id, stage_id: D.stage_id, user_id: D.user_id, owner_id: D.owner_id, creator_user_id: D.creator_user_id, owner_name: D.owner_name, add_time: D.add_time, person_id: typeof D.person_id === "object" ? D.person_id?.value : D.person_id, keys: Object.keys(D).filter((k) => k.length !== 40) }));
+        return res.json({ ok: true, from: IMPORT_OWNERSHIP_FROM, knownPdUsers: Array.from(byPdUser.keys()).slice(0, 20), rows });
+      }
+
+      if (phase === "sample") {
+        // Diagnostic: how many imported docs, and a few samples as the pool will see them.
+        const agg = await db.collection("crmLeads").where("source", "==", "pipedrive-import").count().get();
+        const snap = await db.collection("crmLeads").where("source", "==", "pipedrive-import").limit(Number(req.body?.n) || 5).get();
+        const pick = ["firstName","lastName","phone","email","city","province","lookingFor","budget","employmentStatus","monthlyIncome","dob","stage","owner","addTime","dnc"];
+        const samples = snap.docs.map((d: any) => { const o: any = { id: d.id }; for (const k of pick) o[k] = d.get(k) ?? null; return o; });
+        const poolAgg = await db.collection("crmLeads").where("stage", "==", "free_to_call").count().get();
+        return res.json({ ok: true, imported: agg.data().count, inPool: poolAgg.data().count, samples });
+      }
+
+      if (phase === "persons") {
+        let imported = 0, merged = 0, skipped = 0, dnc = 0, more = true;
+        for (let p = 0; p < pages && more; p++) {
+          const j = await pdFetch(`/persons?limit=${perPage}&start=${start}`);
+          const items: any[] = j.data || [];
+          more = !!j?.additional_data?.pagination?.more_items_in_collection;
+          start = j?.additional_data?.pagination?.next_start ?? start + items.length;
+          if (!items.length) { more = false; break; }
+
+          let batch = db.batch(); let ops = 0;
+          for (const P of items) {
+            if (P.is_deleted) { skipped++; continue; }
+            const rec: any = {};
+            const cf = P.custom_fields && typeof P.custom_fields === "object" ? P.custom_fields : P;   // list endpoint = top-level hashes
+            for (const [hash, name] of Object.entries(PERSON_FIELDS)) {
+              if (SKIP_PERSON_KEYS.has(hash)) continue;
+              const v = cf[hash];
+              if (v === undefined || v === null || v === "") continue;
+              if (rec[name] != null && rec[name] !== "") continue;     // first non-empty wins (two DOB fields)
+              rec[name] = typeof v === "object" ? (v.value ?? null) : v;
+            }
+            const titleCase = (x: any) => x == null ? x : String(x).trim().toLowerCase().replace(/(^|[\s'-])([a-z])/g, (m) => m.toUpperCase());
+            rec.firstName = titleCase(P.first_name || (P.name ? String(P.name).split(/\s+/)[0] : null));
+            rec.lastName = titleCase(P.last_name || (P.name ? String(P.name).split(/\s+/).slice(1).join(" ") : null) || null);
+            // Province → 2-letter code so the pool filter works across old ("Nova Scotia") and new ("NS") records.
+            const PROV: Record<string, string> = { "nova scotia": "NS", "new brunswick": "NB", "newfoundland and labrador": "NL", "newfoundland": "NL", "prince edward island": "PE", "pei": "PE", "quebec": "QC", "québec": "QC", "ontario": "ON", "manitoba": "MB", "saskatchewan": "SK", "alberta": "AB", "british columbia": "BC", "yukon": "YT", "northwest territories": "NT", "nunavut": "NU" };
+            if (rec.province) { const k = String(rec.province).trim().toLowerCase(); rec.province = PROV[k] || (String(rec.province).trim().length === 2 ? String(rec.province).trim().toUpperCase() : rec.province); }
+            const phones: any[] = P.phones || P.phone || []; const emails: any[] = P.emails || P.email || [];
+            const ph = phones.find((x: any) => x?.primary && x?.value) || phones.find((x: any) => x?.value);
+            const em = emails.find((x: any) => x?.primary && x?.value) || emails.find((x: any) => x?.value);
+            rec.phone = ph?.value || null; rec.email = em?.value ? String(em.value).toLowerCase() : null;
+            if (rec.employmentYears || rec.employmentMonths) rec.timeOnJob = `${rec.employmentYears || 0}y ${rec.employmentMonths || 0}m`;
+
+            const pk = phoneKeyOfRaw(rec.phone);
+            if (pk.length !== 10 && !rec.email) { skipped++; continue; }      // no way to reach them — skip
+            // autoTRADER lead-feed artifacts: hashed relay email, no phone, no real name → not a callable human.
+            if (pk.length !== 10 && /@leads\.trader\.ca$/i.test(String(rec.email || ""))) { skipped++; continue; }
+            if (/^autotrader/i.test(String(rec.firstName || ""))) { skipped++; continue; }
+            // Applied month (YYYY-MM) for "call everyone from March 2024" workflows.
+            const appliedIso = P.add_time ? new Date(String(P.add_time).replace(" ", "T") + (String(P.add_time).endsWith("Z") ? "" : "Z")).toISOString() : nowIso;
+            rec.appliedMonth = appliedIso.slice(0, 7);
+            const docId = pk.length === 10 ? `pd_${pk}` : `pp_${P.id}`;
+            const isDnc = /opt[- ]?out|do not (call|contact)|dnc|wrong number/i.test(String(rec.appStatus || "") + " " + String((P.label_ids || []).join(",")));
+            if (isDnc) dnc++;
+
+            const data: any = {
+              ...rec,
+              phoneKey: pk.length === 10 ? pk : null,
+              title: [rec.firstName, rec.lastName].filter(Boolean).join(" ") || P.name || null,
+              pipedrivePersonId: String(P.id),
+              stage: "free_to_call", owner: null, ownerName: null, assignedAt: null,
+              addTime: appliedIso, firstAppliedAt: appliedIso, lastAppliedAt: appliedIso,
+              releasedAt: appliedIso,
+              source: "pipedrive-import", importedAt: nowIso,
+              searchTokens: tokensFor(rec),
+              updatedAt: nowIso,
+              ...(isDnc ? { dnc: true, dncReason: "Pipedrive: " + (rec.appStatus || "opt out") } : {}),
+            };
+            if (!dryRun) { batch.set(db.collection("crmLeads").doc(docId), data, { merge: true }); ops++; }
+            if (docId.startsWith("pd_")) merged++; else imported++;
+            if (ops >= 300) { await batch.commit(); batch = db.batch(); ops = 0; }
+          }
+          if (!dryRun && ops > 0) await batch.commit();
+        }
+        return res.json({ ok: true, phase, nextStart: more ? start : null, done: !more, withPhone: merged, emailOnly: imported, skipped, dnc, dryRun });
+      }
+
       if (phase === "leads") {
         let imported = 0, merged = 0, skipped = 0, dnc = 0, more = true;
         for (let p = 0; p < pages && more; p++) {
@@ -4151,47 +4555,169 @@ async function startServer() {
         return res.json({ ok: true, phase, nextStart: more ? start : null, done: !more, imported, merged, skipped, dnc, dryRun });
       }
 
-      if (phase === "deals") {
-        // Ownership for genuinely-live work: OPEN deals in the sales pipeline added since Aug 1.
-        const STAGE_MAP: Record<number, string> = { 35: "attempting_contact", 40: "dealertrack", 36: "approved", 37: "signed", 38: "signed", 39: "signed" };
-        const repsSnap = await db.collection("crmReps").get();
-        const byPdUser = new Map<string, { id: string; name: string }>();
-        repsSnap.docs.forEach((d: any) => { const pid = d.get("pipedriveOwnerId"); if (pid) byPdUser.set(String(pid), { id: d.id, name: d.get("name") || d.id }); });
-        let cursor = String(req.body?.cursor || ""); let owned = 0, unmatched = 0, older = 0, hasMore = true;
-        for (let p = 0; p < pages && hasMore; p++) {
-          const qs = `/deals?limit=${perPage}&status=open${cursor ? `&start=${cursor}` : ""}`;
-          const j = await pdFetch(qs);
+      if (phase === "leads-backfill") {
+        // Pipedrive LEADS carry the full application inline for many eras (top-level 40-char hashes,
+        // same CRM_FIELDS map as /apply-now). Fill whatever the person record is missing.
+        // NEVER creates records; never overwrites a non-empty field.
+        let backfilled = 0, skippedNoDoc = 0, noContact = 0, more = true;
+        for (let p = 0; p < pages && more; p++) {
+          const j = await pdFetch(`/leads?limit=${perPage}&start=${start}`);
           const items: any[] = j.data || [];
-          hasMore = !!j?.additional_data?.pagination?.more_items_in_collection;
-          cursor = String(j?.additional_data?.pagination?.next_start ?? "");
-          if (!items.length) { hasMore = false; break; }
+          more = !!j?.additional_data?.pagination?.more_items_in_collection;
+          start = j?.additional_data?.pagination?.next_start ?? start + items.length;
+          if (!items.length) { more = false; break; }
           let batch = db.batch(); let ops = 0;
-          for (const D of items) {
-            if (Number(D.pipeline_id) !== 5) continue;
-            if (String(D.add_time || "") < IMPORT_OWNERSHIP_FROM.slice(0, 19).replace("T", " ")) { older++; continue; }
-            const cf = D.custom_fields || D;
-            const phone = cf["9902ecfb207e316c980c1264d302e7e48a86bf4a"];
-            const pk = phoneKeyOfRaw(typeof phone === "object" ? phone?.value : phone);
-            if (pk.length !== 10) { unmatched++; continue; }
-            const rep = byPdUser.get(String(D.owner_id));
-            if (!rep) { unmatched++; continue; }
-            const stage = STAGE_MAP[Number(D.stage_id)] || "attempting_contact";
-            if (!dryRun) {
-              batch.set(db.collection("crmLeads").doc(`pd_${pk}`), {
-                stage, owner: rep.id, ownerName: rep.name, assignedAt: D.add_time || nowIso,
-                attemptingSince: stage === "attempting_contact" ? (D.stage_change_time || D.add_time || nowIso) : null,
-                pipedriveDealId: String(D.id), releasedAt: null, releasedFrom: null, releasedFromName: null,
-                updatedAt: nowIso,
-                activityLog: admin.firestore.FieldValue.arrayUnion({ text: `📥 Imported from Pipedrive as an open deal — ${rep.name}.`, by: "Pipedrive import", at: nowIso, kind: "note", pipedriveDealId: String(D.id) }),
-              }, { merge: true });
-              ops++;
+          for (const L of items) {
+            const rec: any = {};
+            for (const [hash, name] of Object.entries(CRM_FIELDS)) {
+              const v = (L as any)[hash];
+              if (v === undefined || v === null || v === "") continue;
+              const enums = CRM_ENUMS[hash];
+              rec[name] = enums && typeof v === "number" ? (enums[v] || String(v)) : (typeof v === "object" ? (v.value ?? null) : v);
             }
-            owned++;
-            if (ops >= 300) { await batch.commit(); batch = db.batch(); ops = 0; }
+            if (!Object.keys(rec).length) continue;                       // shell lead — nothing to give
+            const pk = phoneKeyOfRaw(rec.phone);
+            const personId = L.person_id ? String(L.person_id) : "";
+            const targetId = pk.length === 10 ? `pd_${pk}` : (personId ? `pp_${personId}` : null);
+            if (!targetId) { noContact++; continue; }
+            const ref = db.collection("crmLeads").doc(targetId);
+            const cur = await ref.get();
+            if (!cur.exists) { skippedNoDoc++; continue; }                 // creation belongs to the persons pass
+            const have = cur.data() || {};
+            const missing: any = {};
+            for (const [k, v] of Object.entries(rec)) if (v != null && v !== "" && (have[k] == null || have[k] === "")) missing[k] = v;
+            const appliedIso = L.add_time ? new Date(L.add_time).toISOString() : nowIso;
+            const upd: any = { updatedAt: nowIso, applications: admin.firestore.FieldValue.arrayUnion(appliedIso), pipedriveLeadId: String(L.id) };
+            if (Object.keys(missing).length) { backfilled++; if (missing.province) { const PROV: Record<string, string> = { "nova scotia": "NS", "new brunswick": "NB", "newfoundland and labrador": "NL", "newfoundland": "NL", "prince edward island": "PE", "quebec": "QC", "ontario": "ON", "manitoba": "MB", "saskatchewan": "SK", "alberta": "AB", "british columbia": "BC" }; const k2 = String(missing.province).trim().toLowerCase(); missing.province = PROV[k2] || (String(missing.province).trim().length === 2 ? String(missing.province).trim().toUpperCase() : missing.province); } }
+            if (!dryRun) { batch.set(ref, { ...missing, ...upd }, { merge: true }); ops++; }
+            if (ops >= 250) { await batch.commit(); batch = db.batch(); ops = 0; }
           }
           if (!dryRun && ops > 0) await batch.commit();
         }
-        return res.json({ ok: true, phase, nextCursor: hasMore ? cursor : null, done: !hasMore, owned, unmatched, olderSkipped: older, dryRun });
+        return res.json({ ok: true, phase, nextStart: more ? start : null, done: !more, backfilled, skippedNoRecord: skippedNoDoc, noContact, dryRun });
+      }
+
+      if (phase === "deals") {
+        // Deals carry the FULL application (phone, email, DOB, address, employment, income, vehicle…).
+        // This pass does THREE things across ALL deals (all statuses, all time):
+        //   1. BACK-FILL: fill any field the person record is missing; re-key a phone-less person
+        //      (pp_<id>) to pd_<phone> once a deal reveals their number; record each application date.
+        //   2. DNC: AI-pipeline Opt Out / Wrong Number → flag the person DNC (out of the claimable pool).
+        //   3. OWNERSHIP (Aug 1+ only, open sales-pipeline deals): put the lead on that rep's board/stage.
+        const STAGE_MAP: Record<number, string> = { 35: "attempting_contact", 40: "dealertrack", 36: "approved", 37: "approved", 38: "signed", 39: "signed" }; // 37 Agreed to Buy stays "approved" — signed is for won/delivered only
+        const repsSnap = await db.collection("crmReps").get();
+        const byPdUser = new Map<string, { id: string; name: string }>();
+        repsSnap.docs.forEach((d: any) => { const pid = d.get("pipedriveOwnerId"); if (pid) byPdUser.set(String(pid), { id: d.id, name: d.get("name") || d.id }); });
+        const ownershipFrom = IMPORT_OWNERSHIP_FROM.slice(0, 19).replace("T", " ");
+        let owned = 0, backfilled = 0, rekeyed = 0, dncN = 0, noPhone = 0, skippedNoDoc = 0, hasMore = true;
+        for (let p = 0; p < pages && hasMore; p++) {
+          const j = await pdFetch(`/deals?limit=${perPage}&start=${start}&status=all_not_deleted`);
+          const items: any[] = j.data || [];
+          hasMore = !!j?.additional_data?.pagination?.more_items_in_collection;
+          start = j?.additional_data?.pagination?.next_start ?? start + items.length;
+          if (!items.length) { hasMore = false; break; }
+          // Batch-resolve personId → CRM doc id (30 at a time) so phone-less deals don't need one query each.
+          const needIds = new Set<string>();
+          for (const D of items) {
+            const cf0 = D.custom_fields && typeof D.custom_fields === "object" ? D.custom_fields : D;
+            const ph0 = cf0["9902ecfb207e316c980c1264d302e7e48a86bf4a"];
+            const pk0 = phoneKeyOfRaw(typeof ph0 === "object" ? ph0?.value : ph0);
+            const pid0 = D.person_id ? String(typeof D.person_id === "object" ? D.person_id.value : D.person_id) : "";
+            if (pk0.length !== 10 && pid0) needIds.add(pid0);
+          }
+          const personDoc = new Map<string, string>();
+          const idsArr = Array.from(needIds);
+          for (let i = 0; i < idsArr.length; i += 30) {
+            const chunk = idsArr.slice(i, i + 30);
+            const q = await db.collection("crmLeads").where("pipedrivePersonId", "in", chunk).get();
+            q.docs.forEach((d: any) => personDoc.set(String(d.get("pipedrivePersonId")), d.id));
+          }
+
+          let batch = db.batch(); let ops = 0;
+          for (const D of items) {
+            const cf = D.custom_fields && typeof D.custom_fields === "object" ? D.custom_fields : D;
+            // Map the deal's application fields through CRM_FIELDS (same hashes as /apply-now).
+            const rec: any = {};
+            for (const [hash, name] of Object.entries(CRM_FIELDS)) {
+              const v = cf[hash]; if (v === undefined || v === null || v === "") continue;
+              const enums = CRM_ENUMS[hash];
+              rec[name] = enums && typeof v === "number" ? (enums[v] || String(v)) : (typeof v === "object" ? (v.value ?? null) : v);
+            }
+            const pk = phoneKeyOfRaw(rec.phone);
+            const personId = D.person_id ? String(typeof D.person_id === "object" ? D.person_id.value : D.person_id) : "";
+            const appliedIso = D.add_time ? new Date(String(D.add_time).replace(" ", "T") + "Z").toISOString() : nowIso;
+            const isDnc = PD_DNC_STAGES.has(Number(D.stage_id));
+
+            // Where does this deal's person live right now? Prefer the phone key; else find the record
+            // by pipedrivePersonId (persons imported with a phone live at pd_<phone>, not pp_<id>).
+            let targetId: string | null = pk.length === 10 ? `pd_${pk}` : (personId ? personDoc.get(personId) || null : null);
+            if (!targetId) { noPhone++; continue; }
+
+            // Re-key: person was imported phone-less as pp_<id> but this deal has their phone → move to pd_<phone>.
+            if (pk.length === 10 && personId && !dryRun) {
+              const ppRef = db.collection("crmLeads").doc(`pp_${personId}`);
+              const pp = await ppRef.get();
+              if (pp.exists) {
+                const pdRef = db.collection("crmLeads").doc(`pd_${pk}`);
+                const pd = await pdRef.get();
+                const merged = { ...(pp.data() || {}), ...(pd.exists ? (pd.data() || {}) : {}) };   // existing pd_ wins on conflicts
+                batch.set(pdRef, merged, { merge: true }); batch.delete(ppRef); ops += 2; rekeyed++;
+              }
+            }
+
+            // Back-fill: only fill what's missing (never overwrite a value the person already had).
+            const fill: any = {};
+            for (const [k, v] of Object.entries(rec)) if (v != null && v !== "") fill[k] = v;
+            if (pk.length === 10) fill.phoneKey = pk;
+            fill.searchTokens = tokensFor({ ...rec });
+            const upd: any = {
+              updatedAt: nowIso,
+              applications: admin.firestore.FieldValue.arrayUnion(appliedIso),
+              lastAppliedAt: appliedIso,            // bumped below only if newer (merge-friendly approximation)
+              pipedriveDealIds: admin.firestore.FieldValue.arrayUnion(String(D.id)),
+              ...(isDnc ? { dnc: true, dncReason: Number(D.stage_id) === 48 ? "Opt out (AI caller)" : "Wrong number (AI caller)" } : {}),
+            };
+            if (isDnc) dncN++;
+
+            // Ownership: open, sales pipeline, added Aug 1 or later, owner maps to a rep.
+            // v1 deals LIST uses `user_id` (object or number); single-get uses `owner_id`.
+            const ownerRaw = D.user_id ?? D.owner_id;
+            const ownerId = ownerRaw && typeof ownerRaw === "object" ? (ownerRaw.id ?? ownerRaw.value) : ownerRaw;
+            const rep = byPdUser.get(String(ownerId));
+            const eligible = D.status === "open" && Number(D.pipeline_id) === 5 && String(D.add_time || "") >= ownershipFrom && !!rep;
+            if (eligible && rep) {
+              const stage = STAGE_MAP[Number(D.stage_id)] || "attempting_contact";
+              Object.assign(upd, {
+                stage, owner: rep.id, ownerName: rep.name, assignedAt: appliedIso,
+                attemptingSince: stage === "attempting_contact" ? (D.stage_change_time ? new Date(String(D.stage_change_time).replace(" ", "T") + "Z").toISOString() : appliedIso) : null,
+                releasedAt: null, releasedFrom: null, releasedFromName: null, pipedriveDealId: String(D.id),
+                activityLog: admin.firestore.FieldValue.arrayUnion({ text: `📥 Imported from Pipedrive as an open deal — ${rep.name}.`, by: "Pipedrive import", at: nowIso, kind: "note", pipedriveDealId: String(D.id) }),
+              });
+            }
+
+            if (!dryRun) {
+              const ref = db.collection("crmLeads").doc(targetId);
+              // Two writes: missing-only fields (create-if-absent semantics via merge of a fill object
+              // that we first strip of keys the doc already has), then the unconditional update.
+              const cur = await ref.get();
+              if (!cur.exists) { skippedNoDoc++; continue; }   // Deals NEVER create records — the persons pass owns creation. No stubs, ever.
+              const have = cur.data() || {};
+              const missing: any = {};
+              for (const [k, v] of Object.entries(fill)) if (have[k] == null || have[k] === "") missing[k] = v;
+              if (Object.keys(missing).length) backfilled++;
+              if (eligible) owned++;
+              batch.set(ref, { ...missing, ...upd }, { merge: true }); ops++;
+            } else {
+              const cur = await db.collection("crmLeads").doc(targetId).get();
+              if (!cur.exists) { skippedNoDoc++; continue; }
+              if (Object.keys(fill).length) backfilled++;
+              if (eligible) owned++;
+            }
+            if (ops >= 250) { await batch.commit(); batch = db.batch(); ops = 0; }
+          }
+          if (!dryRun && ops > 0) await batch.commit();
+        }
+        return res.json({ ok: true, phase, nextStart: hasMore ? start : null, done: !hasMore, owned, backfilled, rekeyed, dnc: dncN, noPhoneNoPerson: noPhone, skippedNoRecord: skippedNoDoc, dryRun });
       }
 
       return res.status(400).json({ error: "Unknown phase. Use 'leads' or 'deals'." });
@@ -4213,8 +4739,10 @@ async function startServer() {
       const province = String(req.query.province || "").trim();
       const lookingFor = String(req.query.lookingFor || "").trim();
       const credit = String(req.query.credit || "").trim();
+      const month = String(req.query.month || "").trim();   // YYYY-MM — "everyone who applied in March 2024"
 
       let ref: any = ctx.db.collection("crmLeads").where("stage", "==", "free_to_call");
+      if (month) ref = ref.where("appliedMonth", "==", month);
       if (province) ref = ref.where("province", "==", province);
       if (lookingFor) ref = ref.where("lookingFor", "==", lookingFor);
       if (credit) ref = ref.where("creditSelfRating", "==", credit);
@@ -4226,6 +4754,13 @@ async function startServer() {
       } else if (q) {
         ref = ref.where("searchTokens", "array-contains", q.split(/\s+/)[0].slice(0, 24));
       }
+
+      // Counts: whole pool (claimable) + the current filtered slice. count() is cheap — no docs read.
+      const countOf = async (r: any) => { try { return (await r.count().get()).data().count as number; } catch { return null; } };
+      const [totalPool, filteredTotal] = await Promise.all([
+        countOf(ctx.db.collection("crmLeads").where("stage", "==", "free_to_call")),
+        countOf(ref),   // same filters as the page, before ordering/limit
+      ]);
 
       ref = ref.orderBy("releasedAt", "desc").limit(limit + 1);
       if (cursor) { try { ref = ref.startAfter(new Date(cursor).toISOString()); } catch {} }
@@ -4245,12 +4780,15 @@ async function startServer() {
           releasedFrom: d.get("releasedFrom") || null, releasedFromName: d.get("releasedFromName") || null,
           releaseStats: d.get("releaseStats") || null, poolNote: d.get("poolNote") || null,
           addTime: d.get("addTime") || null, source: d.get("source") || null,
+          firstAppliedAt: d.get("firstAppliedAt") || d.get("addTime") || null, lastAppliedAt: d.get("lastAppliedAt") || d.get("addTime") || null,
+          appliedMonth: d.get("appliedMonth") || null, applications: d.get("applications") || null,
         }));
       const last = docs[docs.length - 1];
       res.json({
         rows,
         nextCursor: snap.docs.length > limit && last ? (last.get("releasedAt") || last.get("addTime") || null) : null,
         hasMore: snap.docs.length > limit,
+        totalPool, filteredTotal,
       });
     } catch (err: any) {
       console.error("[CRM-POOL] error:", err?.message || err);
