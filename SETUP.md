@@ -1,24 +1,49 @@
-# Setting up this project on a second machine
+# Working on this project from two machines
 
 Working copy of vehicleapprovalcentre.com (Vite/React frontend + `server.ts` Express
 backend). See `CLAUDE.md` for how the project itself works — this file is only about
-getting a new machine running and keeping two machines in sync.
+getting a machine set up and keeping two machines in sync.
 
-GitHub (`Shvmeless88/VAC-New-Site`) is **backup and sync only** — pushing does not
-deploy. Production deploys go out via `gcloud run deploy` from a local folder.
+Current setup: **MacBook** (home) and **Windows desktop** (office). GitHub
+(`Shvmeless88/VAC-New-Site`) is the sync point between them. Pushing to GitHub does
+**not** deploy — production deploys go out via `gcloud run deploy` from a local folder.
 
-## Prerequisites
+---
 
-- **Node 24** (no `engines` pin in `package.json`; the original machine runs v24.18.0) — `brew install node`
-- **git**
-- **gcloud CLI** — only if you intend to deploy from this machine
+## First-time setup on a new machine
 
-## 1. Clone and check out the working branch
+### 1. Install the tools
 
-> **Active branch is `home-redesign`, not `main`.**
-> A plain `git clone` checks out `main`, which may be behind. Always check out the
-> working branch explicitly after cloning.
+| Tool | macOS | Windows (PowerShell) |
+| --- | --- | --- |
+| Git | preinstalled, or `brew install git` | [git-scm.com/downloads/win](https://git-scm.com/downloads/win) |
+| Node 24 | `brew install node` | `winget install OpenJS.NodeJS` or [nodejs.org](https://nodejs.org) |
+| Google Cloud SDK | `brew install --cask google-cloud-sdk` | [cloud.google.com/sdk/docs/install](https://cloud.google.com/sdk/docs/install) |
+| Claude Code (optional) | `curl -fsSL https://claude.ai/install.sh \| bash` | `irm https://claude.ai/install.ps1 \| iex` |
 
+No `engines` pin in `package.json`; the MacBook runs Node v24.18.0 — match that.
+
+**Windows only — two snags worth knowing up front:**
+
+*npm blocked by execution policy.* PowerShell refuses to run `npm.ps1` by default
+(`running scripts is disabled on this system`). Fix once, no admin needed:
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+*Claude Code not on PATH.* The installer may not add itself. Fix once, then open a
+**new** terminal (PATH changes don't reach already-open windows):
+
+```powershell
+[Environment]::SetEnvironmentVariable("PATH", "$env:USERPROFILE\.local\bin;" + [Environment]::GetEnvironmentVariable("PATH","User"), "User")
+```
+
+### 2. Clone and check out the working branch
+
+> **The active branch is `home-redesign`.** Check it out explicitly after cloning.
+
+macOS:
 ```bash
 cd ~/Desktop
 git clone https://github.com/Shvmeless88/VAC-New-Site.git vehicle-approval-centre
@@ -26,27 +51,36 @@ cd vehicle-approval-centre
 git checkout home-redesign
 ```
 
-The repo is ~2 MB, so this is fast. The HTTPS URL above prompts for a GitHub username
-and personal access token on push. To use SSH instead
-(`git@github.com:Shvmeless88/VAC-New-Site.git`), generate an SSH key on this machine
-and add it to GitHub first — keys do not transfer between machines.
+Windows:
+```powershell
+cd $HOME
+git clone https://github.com/Shvmeless88/VAC-New-Site.git vehicle-approval-centre
+cd vehicle-approval-centre
+git checkout home-redesign
+```
 
-## 2. Install dependencies
+The repo is ~2 MB. First push over HTTPS prompts for a GitHub login; on Windows, Git
+Credential Manager opens a browser and remembers it.
 
-```bash
+**Do not put this folder in OneDrive or iCloud Drive.** `npm install` creates tens of
+thousands of files in `node_modules`; a syncing folder will thrash and cause file-lock
+errors during builds. `C:\Users\<you>\vehicle-approval-centre` is a good Windows home.
+
+### 3. Install dependencies
+
+```
 npm install
 ```
 
-`node_modules/` and `dist/` are gitignored and rebuild from scratch. `tsx`, `vite`, and
-`typescript` are all project dependencies — nothing needs installing globally.
+`node_modules/` and `dist/` are gitignored and rebuild per machine.
 
-## 3. Copy the env files across (git cannot do this for you)
+### 4. Copy the env files across (git cannot do this for you)
 
 All `.env*` files are gitignored because they hold live production API credentials.
 Without them the server starts, but Pipedrive, Carfax, Marketcheck, Resend, and Google
 Sheets all fail.
 
-Three files must be copied by hand from the other machine:
+Three files must be moved by hand from a machine that already has them:
 
 | File | Contents |
 | --- | --- |
@@ -55,48 +89,65 @@ Three files must be copied by hand from the other machine:
 | `.env.cloudrun` | 28 keys — Pipedrive token + field hashes, Resend, Carfax, Google Sheets service account, Google Chat webhook |
 
 `.env.local` is empty — skip it. `.env.example` is tracked in git and arrives with the
-clone, but it is a template with no real values.
+clone, but holds no real values.
 
-**Transfer via AirDrop or a password manager.** Do not email, Slack, or text these —
-they are live production credentials, and anything sent through a third-party service
-is stored on that service's servers.
+They're hidden files, so reveal them first:
+- **macOS Finder:** `Cmd + Shift + .`
+- **Windows File Explorer:** View → Show → Hidden items
 
-## 4. Authenticate gcloud (deploying machines only)
+Move them with **OneDrive, a USB stick, or AirDrop (Mac→Mac)**. Do not email, Slack, or
+text them — these are live production credentials, and anything sent through a
+third-party service is stored on that service's servers.
 
-```bash
+### 5. Authenticate gcloud (only on machines that deploy)
+
+```
 gcloud auth login
 gcloud config set project gen-lang-client-0753805028
+gcloud config set run/region us-west1
 ```
 
-gcloud auth expires frequently; expect to redo this often.
+Auth expires frequently — expect to redo the login often. Note that `gcloud auth list`
+can show an account while the tokens are already dead; the real test is an API call:
 
-## 5. Verify
+```
+gcloud run services describe vehicle-approval-centre --region us-west1
+```
 
-```bash
+### 6. Verify
+
+```
 npm run lint     # tsc --noEmit — should pass clean
 npm run dev      # tsx server.ts
 ```
 
-## Working from two machines
+---
+
+## Day-to-day: switching between machines
 
 - **`git pull` before you start.** **Commit and push before you walk away.**
 - **Stay on `home-redesign` on both machines.** Two machines on two branches is where
   merges get painful.
+- If you forget to push and later pull elsewhere, you won't lose work — but you will
+  get a merge to resolve. Pushing before you leave avoids it entirely.
 
 ### Deploys — the one that can actually bite you
 
-`gcloud run deploy --source .` deploys **your local folder**, not GitHub. Deploying
-from a machine that has not pulled will ship stale code to production. Overlapping
-deploys have served stale code before.
+`gcloud run deploy --source .` deploys **your local folder**, not GitHub. Deploying from
+a machine that hasn't pulled will ship stale code to production. This has happened
+before.
 
 - **Always `git pull` immediately before deploying.**
-- **Only one machine deploys at a time** — check with `pgrep -f "gcloud run deploy"`.
+- **Only one machine deploys at a time** (`pgrep -f "gcloud run deploy"` on macOS,
+  `Get-Process | Where-Object {$_.Name -like "*gcloud*"}` on Windows).
 - Verify a new feature actually exists in prod before relying on it.
 
 ### Notes
 
-- `CLAUDE.md` is committed, so Claude Code sessions on a new machine pick up the
+- `CLAUDE.md` is committed, so Claude Code sessions on either machine pick up the
   project guide automatically.
-- `.claude/` is gitignored — local Claude config and memory are per-machine and do not
-  follow you across.
-- Never commit `.env*` files. They are gitignored; keep it that way.
+- `.claude/` is gitignored — local Claude config, settings, and conversation history are
+  per-machine and do **not** follow you between them. A Claude Code session started on
+  one machine knows nothing about work done on the other; only what's committed carries
+  across.
+- Never commit `.env*` files. They're gitignored; keep it that way.
