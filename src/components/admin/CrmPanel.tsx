@@ -28,7 +28,7 @@ type CrmLead = {
   notes?: { content: string; addTime?: string; byName?: string }[];
 };
 type Stage = { key: string; label: string };
-type Rep = { id: string; name: string; quoNumber?: string | null; active?: boolean; uid?: string | null };
+type Rep = { id: string; name: string; quoNumber?: string | null; active?: boolean; archived?: boolean; uid?: string | null };
 
 const MASTER = 'Vehicle Approval Centre';
 
@@ -1451,7 +1451,7 @@ export default function CrmPanel({ role, mode = 'crm' }: { role?: string; mode?:
                       <select defaultValue="" onChange={(e) => { if (e.target.value) assign(l, e.target.value); }}
                         className="h-9 rounded-xl border border-gray-200 bg-white px-2.5 text-[13px] font-semibold text-brand-primary outline-none cursor-pointer focus:border-brand-accent">
                         <option value="" disabled>Assign to…</option>
-                        {reps.filter((r) => !(r as any).archived).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                        {reps.filter((r) => !r.archived).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                       </select>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>

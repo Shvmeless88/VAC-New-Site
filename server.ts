@@ -636,7 +636,8 @@ async function startServer() {
     }
 
     const auth = await verifyDriveVacUser(req.get("authorization"));
-    if (!auth.ok) {
+    // "error" in auth, not !auth.ok — strictNullChecks is off, so the boolean discriminant doesn't narrow.
+    if ("error" in auth) {
       return res.status(401).json({ error: auth.error });
     }
 

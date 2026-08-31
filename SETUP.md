@@ -21,7 +21,8 @@ Current setup: **MacBook** (home) and **Windows desktop** (office). GitHub
 | Google Cloud SDK | `brew install --cask google-cloud-sdk` | [cloud.google.com/sdk/docs/install](https://cloud.google.com/sdk/docs/install) |
 | Claude Code (optional) | `curl -fsSL https://claude.ai/install.sh \| bash` | `irm https://claude.ai/install.ps1 \| iex` |
 
-No `engines` pin in `package.json`; the MacBook runs Node v24.18.0 — match that.
+No `engines` pin in `package.json`; the MacBook runs Node v24.18.0 and the Windows
+desktop v24.19.0 — any Node 24 is fine.
 
 **Windows only — two snags worth knowing up front:**
 
@@ -72,7 +73,9 @@ errors during builds. `C:\Users\<you>\vehicle-approval-centre` is a good Windows
 npm install
 ```
 
-`node_modules/` and `dist/` are gitignored and rebuild per machine.
+`node_modules/` and `dist/` are gitignored and rebuild per machine. Re-run `npm install`
+after any pull that changes `package.json`, or the typecheck fails on types you don’t have
+yet.
 
 ### 4. Copy the env files across (git cannot do this for you)
 
@@ -117,9 +120,14 @@ gcloud run services describe vehicle-approval-centre --region us-west1
 ### 6. Verify
 
 ```
-npm run lint     # tsc --noEmit — should pass clean
+npm run lint     # tsc --noEmit — passes clean; typecheck only, it is not eslint
+npm run build    # vite build — Vite does NOT typecheck, so this can pass while lint fails
 npm run dev      # tsx server.ts
 ```
+
+If `npm run lint` reports `Cannot find namespace 'React'`, your `node_modules` predates
+2026-08-31, when `@types/react` / `@types/react-dom` were added as devDependencies (they
+had never been declared, so the typecheck failed on any clean install). Re-run `npm install`.
 
 ---
 
