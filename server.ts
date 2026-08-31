@@ -2253,9 +2253,19 @@ async function startServer() {
 
       // 2) Drip waiting Inbox leads to active reps (business hours only)
       if (out.businessHours) {
-        const pool = await db.collection("crmLeads").where("owner", "==", null).get();
+        // Filter on stage SERVER-SIDE. Querying owner==null alone returns the entire
+        // Free-to-Call pool (~63k docs) every tick just to find the handful waiting in
+        // the Inbox — the pool only ever grows, so that cost climbs forever. Leads in
+        // the pool are stage "free_to_call" and must never be auto-assigned; only
+        // "new_lead" is eligible. Docs with no stage field at all are no longer picked
+        // up (they were, via the old `|| "new_lead"` default) — every write path sets a
+        // stage explicitly, and silently handing a malformed record to a rep is worse
+        // than leaving it in the Inbox to be noticed.
+        const pool = await db.collection("crmLeads")
+          .where("owner", "==", null)
+          .where("stage", "==", "new_lead")
+          .get();
         const waiting = pool.docs
-          .filter((d: any) => (d.get("stage") || "new_lead") === "new_lead")
           .sort((a: any, b: any) => String(a.get("addTime") || "").localeCompare(String(b.get("addTime") || "")));
         for (const d of waiting) {
           const rep = await assignToNextActiveRep(db, d.ref);
@@ -2289,9 +2299,13 @@ async function startServer() {
       // 3) Inbound email replies → thread (background sweep; the drawer also refreshes on open).
       out.emailsImported = [];
       try {
-        const allLeads = await db.collection("crmLeads").get();
+        // orderBy on the nested field returns ONLY docs that have it, which is the whole
+        // filter we need. Reading the full crmLeads collection here and filtering in
+        // memory pulled every lead (owned, pooled, archived — the lot) every tick to
+        // find the few with a live Gmail thread.
+        const threaded = await db.collection("crmLeads").orderBy("emailThread.threadId").get();
         const gmailCache = new Map<string, any>();
-        for (const d of allLeads.docs.filter((x: any) => x.get("emailThread")?.threadId)) {
+        for (const d of threaded.docs) {
           try {
             const r = await importLeadEmails(db, admin, d, gmailCache);
             if (r.imported > 0) out.emailsImported.push({ id: d.id, count: r.imported });
