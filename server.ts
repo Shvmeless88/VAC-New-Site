@@ -4997,6 +4997,131 @@ async function startServer() {
     });
   });
 
+  // ---- Auction import: paste an eBlock share link (graph.eblock.com/share/…) or an
+  // OpenLane public VDP link and the vehicle lands in `inventory` fully populated —
+  // specs parsed from the auction page, photos re-hosted to Firebase Storage so the
+  // listing outlives the auction page. dryRun:true returns the parse without writing.
+  app.post("/api/inventory/import-auction", async (req, res) => {
+    try {
+      const secret = process.env.CRM_TICK_SECRET || "";
+      const viaSecret = secret && String(req.get("x-tick-secret") || "") === secret;
+      if (!viaSecret) {
+        const ctx = await requireAdmin(req);
+        if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      }
+      const url = String(req.body?.url || "").trim();
+      const price = Number(req.body?.price) || 0;
+      const status = String(req.body?.status || "In Recon");
+      const dryRun = req.body?.dryRun === true;
+      if (!url) return res.status(400).json({ error: "Pass url." });
+      const { admin, db } = await getFirestoreAdmin();
+
+      const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
+      const tc = (s: any) => String(s || "").toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
+      const car: any = { source: null, vin: null, year: null, make: null, model: null, trim: "", mileage: null, bodyStyle: "", transmission: "", fuelType: "", exteriorColor: "", interiorColor: "", engine: "", drivetrain: "", features: [] as string[], photoUrls: [] as string[] };
+
+      const ebShare = url.match(/graph\.eblock\.com\/share\/([A-Za-z0-9]+)/);
+      const olPublic = url.match(/app\.openlane\.ca\/vdp\/retail\/public\/([a-f0-9-]{36})/i);
+
+      if (ebShare) {
+        car.source = "eblock";
+        const r = await fetchWithTimeout(`https://graph.eblock.com/share/${ebShare[1]}`, { headers: { "User-Agent": UA, Accept: "text/html" } }, 30000);
+        const html = await r.text();
+        const field = (label: string) => {
+          // value may embed a colour-swatch tag: <strong><b style=…></b>Gray</strong>
+          const m = html.match(new RegExp(`<span>\\s*${label}\\s*</span>[\\s\\S]{0,160}?<strong>(?:<b[^>]*>\\s*</b>)?\\s*([^<]*)`, "i"));
+          const v = m ? m[1].replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim() : "";
+          return v === "-" ? "" : v;
+        };
+        car.year = Number(field("Year")) || null;
+        car.make = field("Make"); car.model = field("Model"); car.trim = field("Trim");
+        car.vin = field("VIN") || null;
+        car.mileage = Number(field("Vehicle Mileage").replace(/[^\d]/g, "")) || null;
+        car.bodyStyle = field("Body type"); car.exteriorColor = field("Exterior Colour"); car.interiorColor = field("Interior Colour");
+        car.transmission = field("Transmission"); car.engine = field("Engine").replace(/\s+/g, " "); car.drivetrain = field("Drivetrain"); car.fuelType = field("Fuel Type");
+        const opt = html.match(/Options\s*<\/h2>([\s\S]*?)<h2/i);
+        if (opt) car.features = Array.from(new Set(Array.from(opt[1].matchAll(/<[^>]+>([A-Za-z][^<>{}]{2,40})<\//g)).map((m: any) => m[1].trim()))).slice(0, 40);
+        const raw = Array.from(html.matchAll(/https:\/\/media\.prod\.eblock\.e\.inc\/[^"'\s)]+\/images\/([A-Z0-9]+)\.jpg/g)) as any[];
+        const seen = new Set<string>();
+        for (const m of raw) {
+          if (seen.has(m[1])) continue; seen.add(m[1]);
+          car.photoUrls.push(String(m[0]).replace(/w_\d+,h_\d+/, "w_1600,h_1200"));
+        }
+      } else if (olPublic) {
+        car.source = "openlane";
+        const r = await fetchWithTimeout(`https://prod-vdp-service.prd.kar-services.io/api/v1/retail/vdp/public/${olPublic[1]}?locale=en`, { headers: { "User-Agent": UA } }, 30000);
+        const j: any = await r.json();
+        car.year = Number(j.year) || null; car.make = tc(j.make); car.model = tc(j.model); car.trim = j.trim || "";
+        car.mileage = Number(String(j.odometer?.value || "").replace(/[^\d]/g, "")) || null;
+        car.exteriorColor = j.exteriorColor?.value || ""; car.interiorColor = j.interiorColor?.value || "";
+        const pt = j.powerTrain || {};
+        const ptv = (k: string) => pt[k]?.value || "";
+        car.fuelType = ptv("fuelType"); car.transmission = ptv("transmission") || ptv("transmissionType");
+        car.drivetrain = ptv("driveTrain") || ptv("drivetrain");
+        car.engine = [ptv("engineDisplacement") && `${ptv("engineDisplacement")} L`, ptv("engineCylinderCount") && `${ptv("engineCylinderCount")}-Cyl`].filter(Boolean).join(" ");
+        car.features = Array.from(new Set(((j.equipment || []) as any[]).flatMap((e) => (e.disclosures || []).map((d: any) => {
+          const val = String(d.value || "").trim(); const label = String(d.displayName || "").trim();
+          if (!val && !label) return "";
+          if (/^(true|yes)$/i.test(val)) return label;            // boolean feature → just the name
+          if (!label) return val;
+          return `${label}: ${val}`;                              // e.g. "Air Type: Air Conditioning"
+        })).filter(Boolean))).slice(0, 40);
+        car.photoUrls = ([...(j.media || []), ...(j.conditionMedia || [])] as any[]).filter((m) => m?.url && m.type !== "Video").map((m) => m.url).slice(0, 45);
+      } else {
+        return res.status(400).json({ error: "Unrecognized link. Paste an eBlock share link (graph.eblock.com/share/…) or an OpenLane public vehicle link (app.openlane.ca/vdp/retail/public/…)." });
+      }
+      if (!car.year || !car.make) return res.status(422).json({ error: "Could not read the vehicle from that page.", parsed: car });
+
+      const title = [car.year, car.make, car.model, car.trim].filter(Boolean).join(" ");
+      if (dryRun) return res.json({ ok: true, dryRun: true, title, parsed: { ...car, photoUrls: undefined }, photoCount: car.photoUrls.length, photoSample: car.photoUrls.slice(0, 3) });
+
+      // Re-host photos so the listing doesn't depend on the auction page staying up.
+      const bucket = admin.storage().bucket("gen-lang-client-0753805028.firebasestorage.app");
+      const base = `inventory-imports/${(car.vin || Date.now().toString(36)).toLowerCase()}`;
+      const crypto = await import("crypto");
+      const urls: string[] = car.photoUrls.slice(0, 40);
+      const out: (string | null)[] = new Array(urls.length).fill(null);
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < urls.length) {
+          const i = cursor++;
+          try {
+            const resp = await fetchWithTimeout(urls[i], { headers: { "User-Agent": UA } }, 30000);
+            if (!resp.ok) continue;
+            const buf = Buffer.from(await resp.arrayBuffer());
+            if (buf.length < 2000) continue;
+            const path = `${base}/${String(i).padStart(2, "0")}.jpg`;
+            const token = crypto.randomUUID();
+            await bucket.file(path).save(buf, { contentType: "image/jpeg", resumable: false, metadata: { metadata: { firebaseStorageDownloadTokens: token } } });
+            out[i] = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
+          } catch { /* skip a failed photo, keep the rest */ }
+        }
+      };
+      await Promise.all(Array.from({ length: 5 }, worker));
+      const images = out.filter(Boolean) as string[];
+
+      const nowIso2 = new Date().toISOString();
+      const data: any = {
+        vin: car.vin || null, stockNumber: null,
+        year: car.year, make: car.make, model: car.model, trim: car.trim || "",
+        mileage: car.mileage || 0, price,
+        bodyStyle: car.bodyStyle || "", drivetrain: car.drivetrain || "", engine: car.engine || "",
+        transmission: /auto|cvt/i.test(car.transmission) ? "Automatic" : (car.transmission || "Automatic"),
+        fuelType: /gas/i.test(car.fuelType) ? "Gasoline" : (car.fuelType || "Gasoline"),
+        exteriorColor: car.exteriorColor || "", interiorColor: car.interiorColor || "",
+        images, features: car.features,
+        description: `Just landed at auction and currently in MVI/reconditioning — reserve it before it hits the lot. ${title}${car.mileage ? ` with ${Number(car.mileage).toLocaleString()} km` : ""}.`,
+        status, source: `auction-import:${car.source}`, auctionUrl: url,
+        createdAt: new Date(), updatedAt: nowIso2,
+      };
+      const ref = await db.collection("inventory").add(data);
+      return res.json({ ok: true, id: ref.id, title, photos: images.length, photosAttempted: urls.length, status });
+    } catch (e: any) {
+      console.error("[AUCTION-IMPORT]", e);
+      return res.status(500).json({ error: e?.message || "Import failed." });
+    }
+  });
+
   // Google Merchant Center & Facebook Catalog Inventory Feed (XML)
   app.get("/api/inventory-feed.xml", async (req, res) => {
     try {

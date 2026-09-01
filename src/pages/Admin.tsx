@@ -53,6 +53,7 @@ import {
   Sun,
   BarChart3,
   Power,
+  Download,
 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -1618,6 +1619,34 @@ export default function Admin() {
     }
   };
 
+  // Import a vehicle straight from an eBlock share link or OpenLane public link —
+  // the server parses the auction page, re-hosts every photo, and creates the listing.
+  const [auctionImporting, setAuctionImporting] = useState(false);
+  const importFromAuction = async () => {
+    const url = window.prompt('Paste the auction link\n\n• eBlock: graph.eblock.com/share/…\n• OpenLane: app.openlane.ca/vdp/retail/public/…');
+    if (!url?.trim()) return;
+    const priceStr = window.prompt('Asking price (numbers only — you can change it any time):', '');
+    if (priceStr === null) return;
+    const price = Number(String(priceStr).replace(/[^\d.]/g, '')) || 0;
+    setAuctionImporting(true);
+    const toastId = toast.loading('Importing from auction — pulling specs and photos…');
+    try {
+      const { auth } = await import('@/lib/firebase');
+      const token = (await auth.currentUser?.getIdToken()) || '';
+      const res = await fetch('/api/inventory/import-auction', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ url: url.trim(), price, status: 'In Recon' }),
+      });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || 'Import failed.');
+      toast.success(`${j.title} imported with ${j.photos} photos — status "${j.status}".`, { id: toastId, duration: 8000 });
+    } catch (e: any) {
+      toast.error(`Import failed: ${e.message}`, { id: toastId, duration: 8000 });
+    } finally {
+      setAuctionImporting(false);
+    }
+  };
+
   const seedData = async () => {
     const toastId = toast.loading('Seeding inventory...');
     setIsSeeding(true);
@@ -1909,7 +1938,16 @@ export default function Admin() {
                   </Button>
                 )}
                 
-                <Button 
+                <Button
+                  onClick={importFromAuction}
+                  disabled={auctionImporting}
+                  variant="outline"
+                  className="h-14 px-8 rounded-2xl border-brand-accent text-brand-accent font-bold hover:bg-brand-accent/5"
+                >
+                  {auctionImporting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Download className="mr-2 h-5 w-5" />}
+                  {auctionImporting ? 'Importing…' : 'Import from Auction'}
+                </Button>
+                <Button
                   onClick={() => setIsAddVehicleOpen(true)}
                   className="h-14 px-8 rounded-2xl bg-brand-primary hover:bg-brand-secondary text-white font-bold shadow-xl shadow-brand-primary/20"
                 >
