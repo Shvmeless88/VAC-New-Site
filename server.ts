@@ -5142,13 +5142,10 @@ async function startServer() {
           // Map the auction photos onto the standard dealership angle set — the site
           // shows ONLY studio shots; raw auction photos are kept on the doc for staff.
           const SLOTS: { key: string; angle: string; kind: "exterior" | "interior" | "detail" }[] = [
-            // The five money shots, in gallery order. The vision pass picks the
-            // nicest source photo for each; anything it can't find is skipped.
+            // HYBRID MODE: one branded showroom hero for the card; the real auction
+            // photos stay in the gallery behind it. The vision pass just picks the
+            // nicest front three-quarter source shot.
             { key: "front34", angle: "front three-quarter exterior", kind: "exterior" },
-            { key: "rear34", angle: "rear three-quarter exterior", kind: "exterior" },
-            { key: "side", angle: "full side profile exterior", kind: "exterior" },
-            { key: "dash", angle: "interior dashboard", kind: "interior" },
-            { key: "frontseats", angle: "interior front seats", kind: "interior" },
           ];
           let picks: { idx: number; angle: string; kind: string }[] = [];
           const caps: string[] = car.photoCaptions || [];
@@ -5230,10 +5227,8 @@ async function startServer() {
               studio.push(`https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(sPath)}?alt=media&token=${sToken}`);
             } catch (se) { console.error("[AUCTION-IMPORT] studio shot failed:", (se as any)?.message); }
           }
-          // Customers see ONLY the dealership studio set; the raw auction photos are
-          // preserved on the doc (auctionImages) for staff/condition reference.
-          if (studio.length >= 2) { (car as any).auctionImages = images; images = studio; }
-          else if (studio.length) images = [...studio, ...images];
+          // Branded hero up front, real auction photos behind it.
+          if (studio.length) images = [...studio, ...images];
         } catch (se) { console.error("[AUCTION-IMPORT] studio stage skipped:", (se as any)?.message); }
       }
 
