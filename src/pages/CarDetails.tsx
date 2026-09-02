@@ -421,6 +421,23 @@ export default function CarDetails() {
   const [isDesktopLightboxOpen, setIsDesktopLightboxOpen] = useState(false);
   const [showExtrasAll, setShowExtrasAll] = useState(false);
   const [lightboxActiveImage, setLightboxActiveImage] = useState(0);
+  // "Request More Photos" — captures a lead into the CRM Inbox.
+  const [photoReqOpen, setPhotoReqOpen] = useState(false);
+  const [photoReqName, setPhotoReqName] = useState('');
+  const [photoReqPhone, setPhotoReqPhone] = useState('');
+  const [photoReqState, setPhotoReqState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const submitPhotoRequest = async () => {
+    if (!photoReqName.trim() || photoReqPhone.replace(/\D/g, '').length < 10) { setPhotoReqState('error'); return; }
+    setPhotoReqState('sending');
+    try {
+      const res = await fetch('/api/photo-request', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: photoReqName.trim(), phone: photoReqPhone.trim(), vehicle: carTitle, link: window.location.href }),
+      });
+      if (!res.ok) throw new Error();
+      setPhotoReqState('sent');
+    } catch { setPhotoReqState('error'); }
+  };
   // Keyboard navigation while the desktop lightbox is open: ← → to browse, Esc to close.
   useEffect(() => {
     if (!isDesktopLightboxOpen) return;
@@ -1121,7 +1138,21 @@ export default function CarDetails() {
             {/* Carousel Gallery - Full Bleed on Mobile */}
             {car.images && car.images.length > 0 && (
               <div className="space-y-3 px-0 md:px-0 pt-4 pb-0 -mx-3 md:mx-0">
-                <h3 className="text-[18px] font-bold text-slate-800 hidden md:block px-3 md:px-0">Vehicle Gallery</h3>
+                <div className="hidden md:flex items-center justify-between px-3 md:px-0">
+                  <h3 className="text-[18px] font-bold text-slate-800">Vehicle Gallery</h3>
+                  {(car.images?.length || 0) <= 3 && car.status !== 'Sold' && (
+                    <button onClick={() => setPhotoReqOpen(true)}
+                      className="text-[13px] font-bold text-brand-accent border border-brand-accent/30 rounded-full px-4 py-1.5 hover:bg-brand-accent/5 transition">
+                      📸 Request More Photos
+                    </button>
+                  )}
+                </div>
+                {(car.images?.length || 0) <= 3 && car.status !== 'Sold' && (
+                  <button onClick={() => setPhotoReqOpen(true)}
+                    className="md:hidden mx-3 text-[13px] font-bold text-brand-accent border border-brand-accent/30 rounded-full px-4 py-2 hover:bg-brand-accent/5 transition">
+                    📸 Request More Photos
+                  </button>
+                )}
                 <div className="relative group">
                   <div 
                     ref={carouselRef}
@@ -1502,6 +1533,34 @@ export default function CarDetails() {
         </div>
       </div>
       <AnimatePresence>
+        {photoReqOpen && (
+          <div className="fixed inset-0 z-[110] bg-black/50 flex items-center justify-center p-4" onClick={() => setPhotoReqOpen(false)}>
+            <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              {photoReqState === 'sent' ? (
+                <div className="text-center py-4">
+                  <p className="text-2xl mb-2">📸</p>
+                  <h4 className="text-lg font-bold text-slate-800">You&rsquo;re on the list</h4>
+                  <p className="text-sm text-slate-500 mt-1">We&rsquo;ll text you photos of the {carTitle} shortly.</p>
+                  <button onClick={() => setPhotoReqOpen(false)} className="mt-4 h-10 px-6 rounded-xl bg-brand-primary text-white text-sm font-bold">Done</button>
+                </div>
+              ) : (
+                <>
+                  <h4 className="text-lg font-bold text-slate-800">Get more photos</h4>
+                  <p className="text-sm text-slate-500 mt-1 mb-4">Tell us where to text them — we&rsquo;ll send current photos of the {carTitle}.</p>
+                  <input value={photoReqName} onChange={(e) => setPhotoReqName(e.target.value)} placeholder="Your name"
+                    className="w-full h-11 rounded-xl border border-slate-200 px-3.5 text-sm mb-2 outline-none focus:border-brand-accent" />
+                  <input value={photoReqPhone} onChange={(e) => setPhotoReqPhone(e.target.value)} placeholder="Phone number" type="tel"
+                    className="w-full h-11 rounded-xl border border-slate-200 px-3.5 text-sm mb-3 outline-none focus:border-brand-accent" />
+                  {photoReqState === 'error' && <p className="text-xs text-red-500 mb-2">Please enter your name and a valid phone number.</p>}
+                  <button onClick={submitPhotoRequest} disabled={photoReqState === 'sending'}
+                    className="w-full h-11 rounded-xl bg-brand-accent text-white text-sm font-bold disabled:opacity-60">
+                    {photoReqState === 'sending' ? 'Sending…' : 'Text me the photos'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
         {isDesktopLightboxOpen && (
           <motion.div
             initial={{ opacity: 0 }}

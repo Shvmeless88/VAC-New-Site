@@ -4997,6 +4997,40 @@ async function startServer() {
     });
   });
 
+  // ---- "Request More Photos": public button on vehicle pages. Captures a hot
+  // lead straight into the CRM Inbox (merged by phone, same rules as apply-now).
+  app.post("/api/photo-request", async (req, res) => {
+    try {
+      const name = String(req.body?.name || "").trim().slice(0, 80);
+      const phoneRaw = String(req.body?.phone || "").trim().slice(0, 25);
+      const vehicle = String(req.body?.vehicle || "").trim().slice(0, 120);
+      const link = String(req.body?.link || "").trim().slice(0, 300);
+      const pk = phoneKeyOfRaw(phoneRaw);
+      if (!name || pk.length !== 10) return res.status(400).json({ error: "Please give us your name and a valid phone number." });
+      const { admin, db } = await getFirestoreAdmin();
+      const nowIso2 = new Date().toISOString();
+      const parts = name.split(/\s+/);
+      const ref = db.collection("crmLeads").doc(`pd_${pk}`);
+      const cur = await ref.get();
+      const upd: any = {
+        firstName: parts[0], lastName: parts.slice(1).join(" ") || null,
+        phone: phoneRaw, phoneKey: pk, updatedAt: nowIso2,
+        activityLog: admin.firestore.FieldValue.arrayUnion({
+          text: `📸 Requested more photos of ${vehicle || "a vehicle"}${link ? `\n${link}` : ""}`,
+          by: "Website", at: nowIso2, kind: "note",
+        }),
+      };
+      const prevStage2 = cur.exists ? String(cur.get("stage") || "") : "";
+      if (!cur.exists) Object.assign(upd, { stage: "new_lead", owner: null, ownerName: null, addTime: nowIso2, source: "photo-request", title: name, searchTokens: tokensFor({ firstName: parts[0], lastName: parts.slice(1).join(" ") }) });
+      else if (prevStage2 === "free_to_call" || prevStage2 === "lost") Object.assign(upd, { stage: "new_lead", owner: null, ownerName: null, dnc: false, releasedAt: null, releasedFrom: null, releasedFromName: null });
+      await ref.set(upd, { merge: true });
+      return res.json({ ok: true });
+    } catch (e: any) {
+      console.error("[PHOTO-REQUEST]", e);
+      return res.status(500).json({ error: "Something went wrong — please call us instead." });
+    }
+  });
+
   // ---- Auction import: paste an eBlock share link (graph.eblock.com/share/…) or an
   // OpenLane public VDP link and the vehicle lands in `inventory` fully populated —
   // specs parsed from the auction page, photos re-hosted to Firebase Storage so the
@@ -5011,7 +5045,7 @@ async function startServer() {
       }
       const url = String(req.body?.url || "").trim();
       const price = Number(req.body?.price) || 0;
-      const status = String(req.body?.status || "In Recon");
+      const status = String(req.body?.status || "For Sale");
       const dryRun = req.body?.dryRun === true;
       if (!url) return res.status(400).json({ error: "Pass url." });
       const { admin, db } = await getFirestoreAdmin();
@@ -5169,7 +5203,7 @@ async function startServer() {
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${gk}`,
             { method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ contents: [{ parts: [{ text:
-                `Write a used-car listing description for Vehicle Approval Centre, an Atlantic Canada dealership that delivers to the customer's door and works with every credit situation. FACTS (use ONLY these — never invent options, condition, history, or ownership claims): ${JSON.stringify(facts)}. The vehicle just arrived from auction and is currently in MVI/reconditioning — customers can reserve it before it hits the lot. Tone: warm, confident, plain-spoken; 70-100 words; 2-3 short paragraphs or one paragraph plus a short feature line; no ALL-CAPS, no exclamation spam (max one), no emojis, no headings, no price. Return ONLY the description text.` }] }] }) },
+                `Write a used-car listing description for Vehicle Approval Centre, an Atlantic Canada dealership that delivers to the customer's door and works with every credit situation. FACTS (use ONLY these — never invent options, condition, history, or ownership claims): ${JSON.stringify(facts)}. The vehicle is newly listed — mention it just arrived, and that every VAC vehicle receives a full MVI and complete reconditioning before delivery. Tone: warm, confident, plain-spoken; 70-100 words; 2-3 short paragraphs or one paragraph plus a short feature line; no ALL-CAPS, no exclamation spam (max one), no emojis, no headings, no price. Return ONLY the description text.` }] }] }) },
             45000);
           const dj: any = await dr.json().catch(() => ({}));
           const txt = (dj?.candidates?.[0]?.content?.parts || []).map((x: any) => x.text || "").join("").trim();
@@ -5357,7 +5391,7 @@ async function startServer() {
         fuelType: /gas/i.test(car.fuelType) ? "Gasoline" : (car.fuelType || "Gasoline"),
         exteriorColor: car.exteriorColor || "", interiorColor: car.interiorColor || "",
         images, auctionImages: (car as any).auctionImages || null, features: car.features,
-        description: aiDescription || `Just landed at auction and currently in MVI/reconditioning — reserve it before it hits the lot. ${title}${car.mileage ? ` with ${Number(car.mileage).toLocaleString()} km` : ""}.`,
+        description: aiDescription || `Newly arrived: ${title}${car.mileage ? ` with ${Number(car.mileage).toLocaleString()} km` : ""}. Every VAC vehicle receives a full MVI and complete reconditioning before delivery.`,
         status, source: `auction-import:${car.source}`, auctionUrl: url,
         createdAt: new Date(), updatedAt: nowIso2,
       };

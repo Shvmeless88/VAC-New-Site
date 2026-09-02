@@ -1635,7 +1635,7 @@ export default function Admin() {
       const token = (await auth.currentUser?.getIdToken()) || '';
       const res = await fetch('/api/inventory/import-auction', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ url: url.trim(), price, status: 'In Recon' }),
+        body: JSON.stringify({ url: url.trim(), price }),
       });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || 'Import failed.');
