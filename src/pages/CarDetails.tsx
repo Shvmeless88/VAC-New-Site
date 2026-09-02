@@ -982,7 +982,8 @@ export default function CarDetails() {
           {car.status === 'In Recon' && (
             <p className="basis-full text-[13px] text-slate-500 leading-snug mt-1">
               Just arrived — every VAC vehicle completes a full MVI and reconditioning before
-              delivery. Reserve it now and it&rsquo;s yours the day it&rsquo;s ready.
+              delivery. Full photos coming after detailing; message us anytime for current
+              photos, or reserve it now and it&rsquo;s yours the day it&rsquo;s ready.
             </p>
           )}
         </div>

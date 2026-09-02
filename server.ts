@@ -5339,8 +5339,11 @@ async function startServer() {
               studio.push(`https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(sPath)}?alt=media&token=${sToken}`);
             } catch (se) { console.error("[AUCTION-IMPORT] studio shot failed:", (se as any)?.message); }
           }
-          // Branded hero up front, real auction photos behind it.
-          if (studio.length) images = [...studio, ...images];
+          // Hero-only public gallery: the branded showroom shot is the listing; the
+          // raw auction photos stay on the doc (auctionImages) for reps to share on
+          // request and for the condition record. If no hero could be generated and
+          // verified, the real photos remain the gallery so the car still shows well.
+          if (studio.length) { (car as any).auctionImages = images; images = studio; }
         } catch (se) { console.error("[AUCTION-IMPORT] studio stage skipped:", (se as any)?.message); }
       }
 
