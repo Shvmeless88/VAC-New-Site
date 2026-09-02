@@ -57,7 +57,7 @@ export interface Car {
   packageCode?: string;
   accidents?: number;
   owners?: number;
-  status?: 'For Sale' | 'Pending Sale' | 'Sold';
+  status?: 'For Sale' | 'Pending Sale' | 'Sold' | 'In Recon';
   updatedAt?: any;
   createdAt?: any;
   soldAt?: any;

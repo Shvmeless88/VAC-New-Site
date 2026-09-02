@@ -80,12 +80,20 @@ export default React.memo(function CarCard({ car, hideSoldDate = false }: CarCar
             </div>
 
             <div className="absolute bottom-2 left-2 flex gap-1">
-              <div className="bg-white/90 backdrop-blur-sm rounded-lg p-1.5 shadow-sm">
-                <ShieldCheck className="h-3.5 w-3.5 text-brand-accent" />
-              </div>
-              <div className="bg-white/90 backdrop-blur-sm rounded-lg px-2 py-1 shadow-sm text-[10px] font-bold text-brand-primary flex items-center">
-                Certified
-              </div>
+              {car.status === 'In Recon' ? (
+                <div className="bg-amber-50/95 backdrop-blur-sm rounded-lg px-2 py-1 shadow-sm text-[10px] font-bold text-amber-700 flex items-center">
+                  Just Arrived · Reserve Early
+                </div>
+              ) : (
+                <>
+                  <div className="bg-white/90 backdrop-blur-sm rounded-lg p-1.5 shadow-sm">
+                    <ShieldCheck className="h-3.5 w-3.5 text-brand-accent" />
+                  </div>
+                  <div className="bg-white/90 backdrop-blur-sm rounded-lg px-2 py-1 shadow-sm text-[10px] font-bold text-brand-primary flex items-center">
+                    Certified
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

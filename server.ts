@@ -5072,6 +5072,42 @@ async function startServer() {
       } else {
         return res.status(400).json({ error: "Unrecognized link. Paste an eBlock share link (graph.eblock.com/share/…) or an OpenLane public vehicle link (app.openlane.ca/vdp/retail/public/…)." });
       }
+      // eBlock photos arrive in page order with damage close-ups near the front —
+      // classify them once and reorder the gallery: exteriors, interior, details,
+      // documents, damage last. (OpenLane's media list already orders naturally.)
+      if (ebShare && process.env.GEMINI_API_KEY && car.photoUrls.length > 3) {
+        try {
+          const gk2 = process.env.GEMINI_API_KEY;
+          const thumbs2: string[] = car.photoUrls.map((u: string) => u.replace(/w_\d+,h_\d+/, "w_400,h_300"));
+          const n2 = Math.min(thumbs2.length, 24);
+          const parts2: any[] = [{ text: `These ${n2} photos of one car are numbered 0-${n2 - 1} in order. Reply ONLY with JSON: {"front34": <index of the best clean front three-quarter exterior shot, or -1>, "cats": [<one category per photo, in order: "exterior" | "interior" | "detail" | "damage" | "document">]}. "damage" = close-ups of scratches/dents/chips; "document" = window stickers, VIN plates, odometer readouts; "detail" = wheels, engine bay, badges.` }];
+          for (let i = 0; i < n2; i++) {
+            const rr = await fetchWithTimeout(thumbs2[i], { headers: { "User-Agent": UA } }, 20000);
+            parts2.push({ inlineData: { mimeType: "image/jpeg", data: Buffer.from(await rr.arrayBuffer()).toString("base64") } });
+          }
+          const cr = await fetchWithTimeout(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${gk2}`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: parts2 }] }) }, 60000);
+          const cjj: any = await cr.json().catch(() => ({}));
+          const txt2 = (cjj?.candidates?.[0]?.content?.parts || []).map((x: any) => x.text || "").join("");
+          const mj = txt2.match(/\{[\s\S]*\}/);
+          if (mj) {
+            const parsed2 = JSON.parse(mj[0]);
+            const cats: string[] = Array.isArray(parsed2.cats) ? parsed2.cats : [];
+            if (cats.length >= 4) {
+              const rank: Record<string, number> = { exterior: 0, interior: 1, detail: 2, document: 3, damage: 5 };
+              const idxs = car.photoUrls.map((_: string, i: number) => i);
+              const key = (i: number) => (i < cats.length ? (rank[cats[i]] ?? 4) : 4);
+              idxs.sort((a: number, b: number) => key(a) - key(b) || a - b);
+              const front = Number(parsed2.front34);
+              if (front >= 0) { const pos = idxs.indexOf(front); if (pos > 0) { idxs.splice(pos, 1); idxs.unshift(front); } }
+              car.photoUrls = idxs.map((i: number) => car.photoUrls[i]);
+              (car as any).slotFront = 0;
+              console.log(`[AUCTION-IMPORT] reordered ${cats.length} classified photos (damage last)`);
+            }
+          }
+        } catch (oe) { console.error("[AUCTION-IMPORT] photo ordering skipped:", (oe as any)?.message); }
+      }
+
       if (!car.year || !car.make) return res.status(422).json({ error: "Could not read the vehicle from that page.", parsed: car });
 
       const title = [car.year, car.make, car.model, car.trim].filter(Boolean).join(" ");
@@ -5235,6 +5271,9 @@ async function startServer() {
               const idx = caps.findIndex((c) => CAP_RES[s2.key]?.test(c));
               if (idx >= 0) picks.push({ idx, angle: s2.angle, kind: s2.kind });
             }
+          }
+          if (!picks.length && typeof (car as any).slotFront === "number") {
+            picks = [{ idx: (car as any).slotFront, angle: "front three-quarter exterior", kind: "exterior" }];
           }
           if (!picks.length) {
             // eBlock: pick angles by eye, from SMALL thumbnails (full-size blows the request cap).
