@@ -1625,7 +1625,7 @@ export default function Admin() {
   const importFromAuction = async () => {
     const url = window.prompt('Paste the auction link\n\n• eBlock: graph.eblock.com/share/…\n• OpenLane: app.openlane.ca/vdp/retail/public/…');
     if (!url?.trim()) return;
-    const priceStr = window.prompt('Asking price (numbers only — you can change it any time):', '');
+    const priceStr = window.prompt('RETAIL asking price — what the customer pays, NOT what you paid at auction.\n(Numbers only — you can change it any time.)', '');
     if (priceStr === null) return;
     const price = Number(String(priceStr).replace(/[^\d.]/g, '')) || 0;
     setAuctionImporting(true);

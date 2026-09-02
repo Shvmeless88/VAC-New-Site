@@ -5066,7 +5066,9 @@ async function startServer() {
           if (!label) return val;
           return `${label}: ${val}`;                              // e.g. "Air Type: Air Conditioning"
         })).filter(Boolean))).slice(0, 40);
-        car.photoUrls = ([...(j.media || []), ...(j.conditionMedia || [])] as any[]).filter((m) => m?.url && m.type !== "Video").map((m) => m.url).slice(0, 45);
+        const olMedia = ([...(j.media || []), ...(j.conditionMedia || [])] as any[]).filter((m) => m?.url && m.type !== "Video").slice(0, 45);
+        car.photoUrls = olMedia.map((m) => m.url);
+        car.photoCaptions = olMedia.map((m) => String(m.caption || ""));
       } else {
         return res.status(400).json({ error: "Unrecognized link. Paste an eBlock share link (graph.eblock.com/share/…) or an OpenLane public vehicle link (app.openlane.ca/vdp/retail/public/…)." });
       }
@@ -5098,7 +5100,142 @@ async function startServer() {
         }
       };
       await Promise.all(Array.from({ length: 5 }, worker));
-      const images = out.filter(Boolean) as string[];
+      let images = out.filter(Boolean) as string[];
+
+      // ---- VAC virtual showroom: composite the hero angles onto the FIXED studio plate
+      // (vac-showroom-plate.png — never changes). Failures never block the import.
+      const geminiKey = process.env.GEMINI_API_KEY || "";
+      if (geminiKey && images.length && req.body?.studio !== false) {
+        try {
+          const fs = await import("fs");
+          const plate = fs.readFileSync("./vac-showroom-plate.jpg");
+          const fetchBuf = async (u: string) => {
+            const r2 = await fetchWithTimeout(u, { headers: { "User-Agent": UA } }, 30000);
+            return Buffer.from(await r2.arrayBuffer());
+          };
+          const gemini = async (parts: any[], wantImage: boolean): Promise<any> => {
+            for (let attempt = 0; attempt < 3; attempt++) {
+              const r2 = await fetchWithTimeout(
+                `https://generativelanguage.googleapis.com/v1beta/models/${wantImage ? "gemini-2.5-flash-image" : "gemini-3.6-flash"}:generateContent?key=${geminiKey}`,
+                { method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ contents: [{ parts }], ...(wantImage ? { generationConfig: { responseModalities: ["IMAGE"] } } : {}) }) },
+                90000);
+              const j2: any = await r2.json().catch(() => ({}));
+              if (r2.status === 429 || j2?.error?.status === "RESOURCE_EXHAUSTED") {
+                console.error(`[AUCTION-IMPORT] gemini rate-limited (attempt ${attempt + 1}) — backing off`);
+                await new Promise((rs) => setTimeout(rs, 20000 * (attempt + 1)));
+                continue;
+              }
+              if (j2?.error) { console.error("[AUCTION-IMPORT] gemini error:", JSON.stringify(j2.error).slice(0, 200)); return wantImage ? null : ""; }
+              const cand = j2?.candidates?.[0];
+              const ps = cand?.content?.parts || [];
+              if (wantImage) {
+                const p = ps.find((x: any) => x.inlineData?.data);
+                if (!p) { console.error("[AUCTION-IMPORT] gemini returned no image, finishReason:", cand?.finishReason, String(ps.map((x: any) => x.text || "").join(" ")).slice(0, 120)); return null; }
+                return Buffer.from(p.inlineData.data, "base64");
+              }
+              return ps.map((x: any) => x.text || "").join("");
+            }
+            return wantImage ? null : "";
+          };
+
+          // Map the auction photos onto the standard dealership angle set — the site
+          // shows ONLY studio shots; raw auction photos are kept on the doc for staff.
+          const SLOTS: { key: string; angle: string; kind: "exterior" | "interior" | "detail" }[] = [
+            // The five money shots, in gallery order. The vision pass picks the
+            // nicest source photo for each; anything it can't find is skipped.
+            { key: "front34", angle: "front three-quarter exterior", kind: "exterior" },
+            { key: "rear34", angle: "rear three-quarter exterior", kind: "exterior" },
+            { key: "side", angle: "full side profile exterior", kind: "exterior" },
+            { key: "dash", angle: "interior dashboard", kind: "interior" },
+            { key: "frontseats", angle: "interior front seats", kind: "interior" },
+          ];
+          let picks: { idx: number; angle: string; kind: string }[] = [];
+          const caps: string[] = car.photoCaptions || [];
+          if (caps.length) {
+            // OpenLane captions its photos — map angles directly, no vision call needed.
+            const CAP_RES: Record<string, RegExp> = {
+              front34: /front.*(3\/4|quarter)|driver.*front.*photo/i,
+              rear34: /rear.*(3\/4|quarter)|passenger.*rear.*photo/i,
+              side: /side.*(profile|photo)|profile/i,
+              dash: /dash|instrument|front interior/i,
+              frontseats: /front seat|driver seat/i,
+            };
+            for (const s2 of SLOTS) {
+              const idx = caps.findIndex((c) => CAP_RES[s2.key]?.test(c));
+              if (idx >= 0) picks.push({ idx, angle: s2.angle, kind: s2.kind });
+            }
+          }
+          if (!picks.length) {
+            // eBlock: pick angles by eye, from SMALL thumbnails (full-size blows the request cap).
+            const thumbs: string[] = (car.photoUrls as string[]).map((u: string) => u.replace(/w_\d+,h_\d+/, "w_400,h_300"));
+            const sampleN = Math.min(thumbs.length, 24);
+            const sampleParts: any[] = [{ text: `These ${sampleN} photos of the same car are numbered 0-${sampleN - 1} in order. Reply ONLY with a JSON object mapping these keys to the best photo index (or -1 if that angle is missing): ${SLOTS.map((s2) => s2.key + " = " + s2.angle).join("; ")}. Example: {"front34":0,"rear34":3,"side":-1,"dash":5,"frontseats":8}. Only assign an index if that photo GENUINELY shows that angle — use -1 rather than a near-miss. Prefer clean, well-lit, complete shots; never pick close-ups of damage for exterior slots.` }];
+            for (let i = 0; i < sampleN; i++) {
+              try { sampleParts.push({ inlineData: { mimeType: "image/jpeg", data: (await fetchBuf(thumbs[i])).toString("base64") } }); }
+              catch { sampleParts.push({ text: `(photo ${i} unavailable)` }); }
+            }
+            try {
+              const ans = String(await gemini(sampleParts, false)).match(/\{[\s\S]*?\}/);
+              if (ans) {
+                const p = JSON.parse(ans[0]);
+                for (const s2 of SLOTS) {
+                  const idx = Number(p[s2.key]);
+                  if (idx >= 0 && idx < images.length) picks.push({ idx, angle: s2.angle, kind: s2.kind });
+                }
+              }
+            } catch (se) { console.error("[AUCTION-IMPORT] angle selection failed:", (se as any)?.message); }
+          }
+          if (!picks.length) picks = [{ idx: 0, angle: "front three-quarter exterior", kind: "exterior" }];
+
+          const studio: string[] = [];
+          let genN = 0;
+          for (const pick of picks.slice(0, 5)) {
+            try {
+              if (genN++) await new Promise((rs) => setTimeout(rs, 3000));
+              const srcBuf = await fetchBuf(images[pick.idx]);
+              const prompt = pick.kind === "interior"
+                ? `Image 1 is a fixed dealership showroom background plate. Image 2 is a ${pick.angle} photo of a car. Produce a photorealistic version of image 2 where anything visible THROUGH the windshield or windows is replaced by the showroom from image 1 (purple wall with white V logo, white wall). Keep the entire interior 100% identical — seats, dash, trim, wear. Same framing as image 2. No text, no people.`
+                : pick.kind === "detail"
+                ? `Image 1 is a fixed dealership showroom background plate. Image 2 is a ${pick.angle} photo of a car. Recreate image 2 exactly, but replace the ground and background with the showroom environment from image 1 (polished light-grey floor, studio lighting). Keep the wheel/car parts 100% identical. No text, no people.`
+                : `Image 1 is a fixed dealership showroom background plate (purple wall with white V logo, white wall, circular floor turntable). Image 2 is a dealer photo of a car. The turntable in image 1 is large — a parked car covers only about 60% of its width. Produce a photorealistic composite: the EXACT car from image 2 parked centered ON the turntable (all four wheels inside the circle), seen from the SAME camera angle and framing as image 2 — do not rotate or re-pose the car. Keep the turntable exactly as in image 1 (same size and position in frame; never enlarge, shrink, or move it) and scale the car so it fits well inside the platform with generous turntable visible around it. CRITICAL: the background must remain EXACTLY image 1 — identical walls, logo, floor, lighting, framing, nothing moved or restyled. Keep the car completely unchanged (body, wheels, badges, trim, colour). Adapt only the car's lighting/reflections to indoor studio light and add a natural soft shadow and subtle floor reflection under it. No text, no people, no extra objects.`;
+              const genParts = [
+                { text: prompt },
+                { inlineData: { mimeType: "image/jpeg", data: plate.toString("base64") } },
+                { inlineData: { mimeType: "image/jpeg", data: srcBuf.toString("base64") } },
+              ];
+              let outBuf = await gemini(genParts, true);
+              if (!outBuf || outBuf.length < 20000) {              // one more try — NO_IMAGE happens
+                await new Promise((rs) => setTimeout(rs, 5000));
+                outBuf = await gemini(genParts, true);
+              }
+              if (!outBuf || outBuf.length < 20000) continue;
+              // Guard: the generated shot must show the SAME vehicle as the source —
+              // if the model invented a car, throw the shot away.
+              try {
+                const verdict = String(await gemini([
+                  { text: `Photo A and photo B: do they show the exact same vehicle (same colour, body style, wheels, trim)? Ignore the background. Reply ONLY JSON: {"same":true} or {"same":false}.` },
+                  { inlineData: { mimeType: "image/jpeg", data: srcBuf.toString("base64") } },
+                  { inlineData: { mimeType: "image/jpeg", data: outBuf.toString("base64") } },
+                ], false));
+                if (!/"same"\s*:\s*true/i.test(verdict)) { console.error(`[AUCTION-IMPORT] studio shot rejected (vehicle mismatch) for ${pick.angle}`); continue; }
+              } catch (ve) {
+                // FAIL CLOSED: if we can't verify it's the same car, we don't publish it.
+                console.error(`[AUCTION-IMPORT] studio shot dropped (verification unavailable) for ${pick.angle}:`, (ve as any)?.message);
+                continue;
+              }
+              const sPath = `${base}/studio-${studio.length}.jpg`;
+              const sToken = crypto.randomUUID();
+              await bucket.file(sPath).save(outBuf, { contentType: "image/jpeg", resumable: false, metadata: { metadata: { firebaseStorageDownloadTokens: sToken } } });
+              studio.push(`https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(sPath)}?alt=media&token=${sToken}`);
+            } catch (se) { console.error("[AUCTION-IMPORT] studio shot failed:", (se as any)?.message); }
+          }
+          // Customers see ONLY the dealership studio set; the raw auction photos are
+          // preserved on the doc (auctionImages) for staff/condition reference.
+          if (studio.length >= 2) { (car as any).auctionImages = images; images = studio; }
+          else if (studio.length) images = [...studio, ...images];
+        } catch (se) { console.error("[AUCTION-IMPORT] studio stage skipped:", (se as any)?.message); }
+      }
 
       const nowIso2 = new Date().toISOString();
       const data: any = {
@@ -5109,7 +5246,7 @@ async function startServer() {
         transmission: /auto|cvt/i.test(car.transmission) ? "Automatic" : (car.transmission || "Automatic"),
         fuelType: /gas/i.test(car.fuelType) ? "Gasoline" : (car.fuelType || "Gasoline"),
         exteriorColor: car.exteriorColor || "", interiorColor: car.interiorColor || "",
-        images, features: car.features,
+        images, auctionImages: (car as any).auctionImages || null, features: car.features,
         description: `Just landed at auction and currently in MVI/reconditioning — reserve it before it hits the lot. ${title}${car.mileage ? ` with ${Number(car.mileage).toLocaleString()} km` : ""}.`,
         status, source: `auction-import:${car.source}`, auctionUrl: url,
         createdAt: new Date(), updatedAt: nowIso2,
