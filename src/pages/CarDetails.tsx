@@ -421,6 +421,18 @@ export default function CarDetails() {
   const [isDesktopLightboxOpen, setIsDesktopLightboxOpen] = useState(false);
   const [showExtrasAll, setShowExtrasAll] = useState(false);
   const [lightboxActiveImage, setLightboxActiveImage] = useState(0);
+  // Keyboard navigation while the desktop lightbox is open: ← → to browse, Esc to close.
+  useEffect(() => {
+    if (!isDesktopLightboxOpen) return;
+    const n = car?.images?.length || 0;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight' && n) setLightboxActiveImage((i) => (i + 1) % n);
+      else if (e.key === 'ArrowLeft' && n) setLightboxActiveImage((i) => (i - 1 + n) % n);
+      else if (e.key === 'Escape') setIsDesktopLightboxOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isDesktopLightboxOpen, car?.images?.length]);
   const [showMobileFooter, setShowMobileFooter] = useState(false);
   const carouselRef = React.useRef<HTMLDivElement>(null);
   const navRef = React.useRef<HTMLDivElement>(null);
@@ -1492,20 +1504,39 @@ export default function CarDetails() {
             >
               <X className="h-6 w-6" />
             </button>
-            <div className="flex-1 flex items-center justify-center">
-              <img 
-                src={car.images?.[lightboxActiveImage]} 
-                alt="" 
+            <div className="flex-1 flex items-center justify-center relative">
+              {/* Prev / Next — click zones + arrows */}
+              <button
+                onClick={() => setLightboxActiveImage((i) => (i - 1 + (car.images?.length || 1)) % (car.images?.length || 1))}
+                className="absolute left-0 top-0 bottom-0 w-24 flex items-center justify-start pl-4 text-white/70 hover:text-white z-10"
+                aria-label="Previous photo"
+              >
+                <span className="p-3 bg-white/10 rounded-full hover:bg-white/25 transition"><ChevronLeft className="h-8 w-8" /></span>
+              </button>
+              <img
+                src={car.images?.[lightboxActiveImage]}
+                alt=""
                 className="max-h-[80vh] max-w-full object-contain"
                 referrerPolicy="no-referrer"
               />
+              <button
+                onClick={() => setLightboxActiveImage((i) => (i + 1) % (car.images?.length || 1))}
+                className="absolute right-0 top-0 bottom-0 w-24 flex items-center justify-end pr-4 text-white/70 hover:text-white z-10"
+                aria-label="Next photo"
+              >
+                <span className="p-3 bg-white/10 rounded-full hover:bg-white/25 transition"><ChevronRight className="h-8 w-8" /></span>
+              </button>
+              <span className="absolute bottom-2 left-1/2 -translate-x-1/2 text-white/70 text-sm font-semibold">
+                {lightboxActiveImage + 1} / {car.images?.length || 0}
+              </span>
             </div>
-            <div className="flex gap-2 overflow-x-auto p-4 justify-center">
+            <div className="flex gap-2 overflow-x-auto p-4">
               {car.images?.map((img, index) => (
-                <button 
+                <button
                   key={index}
+                  ref={(el) => { if (el && lightboxActiveImage === index) el.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' }); }}
                   onClick={() => setLightboxActiveImage(index)}
-                  className={`w-20 h-20 rounded-lg overflow-hidden border-2 ${lightboxActiveImage === index ? 'border-white' : 'border-transparent'}`}
+                  className={`w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden border-2 ${lightboxActiveImage === index ? 'border-white' : 'border-transparent opacity-60 hover:opacity-100'}`}
                 >
                   <img src={img || null} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 </button>
