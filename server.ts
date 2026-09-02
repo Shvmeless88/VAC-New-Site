@@ -5075,7 +5075,80 @@ async function startServer() {
       if (!car.year || !car.make) return res.status(422).json({ error: "Could not read the vehicle from that page.", parsed: car });
 
       const title = [car.year, car.make, car.model, car.trim].filter(Boolean).join(" ");
-      if (dryRun) return res.json({ ok: true, dryRun: true, title, parsed: { ...car, photoUrls: undefined }, photoCount: car.photoUrls.length, photoSample: car.photoUrls.slice(0, 3) });
+
+      // ---- Competitive Atlantic-Canada pricing. Maritime comps first; thin sample →
+      // Canada-wide median with a small Atlantic uplift. Suggestion only becomes the
+      // price when the admin leaves the price blank; a typed price always wins.
+      let market: any = null;
+      try {
+        const mcKey = process.env.MARKETCHECK_API_KEY;
+        if (mcKey && car.year && car.make && car.model) {
+          const comps = async (opts: { provinces?: string; yearSpread?: boolean; kmBand?: boolean }) => {
+            const u = new URL("https://api.marketcheck.com/v2/search/car/active");
+            u.searchParams.set("api_key", mcKey); u.searchParams.set("country", "CA");
+            if (opts.yearSpread) u.searchParams.set("year_range", `${car.year - 1}-${car.year + 1}`);
+            else u.searchParams.set("year", String(car.year));
+            u.searchParams.set("make", String(car.make)); u.searchParams.set("model", String(car.model));
+            if (opts.provinces) u.searchParams.set("state", opts.provinces);
+            if (opts.kmBand && car.mileage) u.searchParams.set("miles_range", `${Math.max(0, car.mileage - 35000)}-${car.mileage + 35000}`);
+            u.searchParams.set("stats", "price"); u.searchParams.set("rows", "0");
+            const r2 = await fetchWithTimeout(u.toString());
+            if (!r2.ok) return null;
+            const cj: any = await r2.json();
+            const st = cj?.data?.stats?.price || cj?.stats?.price;
+            return st?.median ? { median: Number(st.median), count: Number(st.count || 0), low: st.min, high: st.max } : null;
+          };
+          // Canada's sample sizes are thin — widen progressively until credible.
+          const ladders: { o: any; need: number; scope: string; adj: number }[] = [
+            { o: { provinces: "NS,NB,PE,NL", yearSpread: false, kmBand: true }, need: 8, scope: "atlantic", adj: 1 },
+            { o: { provinces: "NS,NB,PE,NL", yearSpread: true, kmBand: true }, need: 8, scope: "atlantic±1yr", adj: 1 },
+            { o: { yearSpread: false, kmBand: true }, need: 10, scope: "canada+5%", adj: 1.05 },
+            { o: { yearSpread: true, kmBand: true }, need: 10, scope: "canada±1yr+5%", adj: 1.05 },
+            { o: { yearSpread: true, kmBand: false }, need: 10, scope: "canada±1yr-anykm+5%", adj: 1.05 },
+          ];
+          for (const step of ladders) {
+            const c2 = await comps(step.o);
+            if (c2 && c2.count >= step.need) { market = { ...c2, median: Math.round(c2.median * step.adj), scope: step.scope }; break; }
+          }
+          if (market) {
+            // dealer price point: nearest $500, minus $5 → …,995 / …,495
+            market.suggested = Math.max(500, Math.round(market.median / 500) * 500 - 5);
+          }
+        }
+      } catch (me) { console.error("[AUCTION-IMPORT] market comps skipped:", (me as any)?.message); }
+      const finalPrice = price > 0 ? price : (market?.suggested || 0);
+
+      // ---- AI listing description: warm, honest, grounded ONLY in the parsed facts.
+      let aiDescription = "";
+      try {
+        const gk = process.env.GEMINI_API_KEY;
+        if (gk) {
+          const facts = {
+            vehicle: title, kilometres: car.mileage, bodyStyle: car.bodyStyle || undefined,
+            drivetrain: car.drivetrain || undefined, engine: car.engine || undefined,
+            transmission: car.transmission || undefined, exteriorColor: car.exteriorColor || undefined,
+            interiorColor: car.interiorColor || undefined, features: (car.features || []).slice(0, 18),
+          };
+          const dr = await fetchWithTimeout(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${gk}`,
+            { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ contents: [{ parts: [{ text:
+                `Write a used-car listing description for Vehicle Approval Centre, an Atlantic Canada dealership that delivers to the customer's door and works with every credit situation. FACTS (use ONLY these — never invent options, condition, history, or ownership claims): ${JSON.stringify(facts)}. The vehicle just arrived from auction and is currently in MVI/reconditioning — customers can reserve it before it hits the lot. Tone: warm, confident, plain-spoken; 70-100 words; 2-3 short paragraphs or one paragraph plus a short feature line; no ALL-CAPS, no exclamation spam (max one), no emojis, no headings, no price. Return ONLY the description text.` }] }] }) },
+            45000);
+          const dj: any = await dr.json().catch(() => ({}));
+          const txt = (dj?.candidates?.[0]?.content?.parts || []).map((x: any) => x.text || "").join("").trim();
+          if (txt.length > 80 && txt.length < 1200) aiDescription = txt;
+        }
+      } catch (de) { console.error("[AUCTION-IMPORT] description skipped:", (de as any)?.message); }
+      const marketFields: any = market ? {
+        marketMedian: market.median, marketSampleSize: market.count,
+        ...(finalPrice ? {
+          marketPriceDifference: Math.round(market.median - finalPrice),
+          marketPriceRating: (finalPrice / market.median) <= 0.94 ? "Great Price" : (finalPrice / market.median) <= 1.00 ? "Good Price" : (finalPrice / market.median) <= 1.08 ? "Fair Price" : "High Price",
+        } : {}),
+      } : {};
+
+      if (dryRun) return res.json({ ok: true, dryRun: true, title, parsed: { ...car, photoUrls: undefined }, photoCount: car.photoUrls.length, photoSample: car.photoUrls.slice(0, 3), market, finalPrice });
 
       // Re-host photos so the listing doesn't depend on the auction page staying up.
       const bucket = admin.storage().bucket("gen-lang-client-0753805028.firebasestorage.app");
@@ -5236,18 +5309,18 @@ async function startServer() {
       const data: any = {
         vin: car.vin || null, stockNumber: null,
         year: car.year, make: car.make, model: car.model, trim: car.trim || "",
-        mileage: car.mileage || 0, price,
+        mileage: car.mileage || 0, price: finalPrice, ...marketFields,
         bodyStyle: car.bodyStyle || "", drivetrain: car.drivetrain || "", engine: car.engine || "",
         transmission: /auto|cvt/i.test(car.transmission) ? "Automatic" : (car.transmission || "Automatic"),
         fuelType: /gas/i.test(car.fuelType) ? "Gasoline" : (car.fuelType || "Gasoline"),
         exteriorColor: car.exteriorColor || "", interiorColor: car.interiorColor || "",
         images, auctionImages: (car as any).auctionImages || null, features: car.features,
-        description: `Just landed at auction and currently in MVI/reconditioning — reserve it before it hits the lot. ${title}${car.mileage ? ` with ${Number(car.mileage).toLocaleString()} km` : ""}.`,
+        description: aiDescription || `Just landed at auction and currently in MVI/reconditioning — reserve it before it hits the lot. ${title}${car.mileage ? ` with ${Number(car.mileage).toLocaleString()} km` : ""}.`,
         status, source: `auction-import:${car.source}`, auctionUrl: url,
         createdAt: new Date(), updatedAt: nowIso2,
       };
       const ref = await db.collection("inventory").add(data);
-      return res.json({ ok: true, id: ref.id, title, photos: images.length, photosAttempted: urls.length, status });
+      return res.json({ ok: true, id: ref.id, title, photos: images.length, photosAttempted: urls.length, status, price: finalPrice, autoPriced: price <= 0 && finalPrice > 0, market });
     } catch (e: any) {
       console.error("[AUCTION-IMPORT]", e);
       return res.status(500).json({ error: e?.message || "Import failed." });

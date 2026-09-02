@@ -1625,7 +1625,7 @@ export default function Admin() {
   const importFromAuction = async () => {
     const url = window.prompt('Paste the auction link\n\n• eBlock: graph.eblock.com/share/…\n• OpenLane: app.openlane.ca/vdp/retail/public/…');
     if (!url?.trim()) return;
-    const priceStr = window.prompt('RETAIL asking price — what the customer pays, NOT what you paid at auction.\n(Numbers only — you can change it any time.)', '');
+    const priceStr = window.prompt('RETAIL asking price — what the customer pays, NOT what you paid at auction.\n\nLeave BLANK to auto-price against the Atlantic Canada market.\n(You can change it any time.)', '');
     if (priceStr === null) return;
     const price = Number(String(priceStr).replace(/[^\d.]/g, '')) || 0;
     setAuctionImporting(true);
@@ -1639,7 +1639,7 @@ export default function Admin() {
       });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || 'Import failed.');
-      toast.success(`${j.title} imported with ${j.photos} photos — status "${j.status}".`, { id: toastId, duration: 8000 });
+      toast.success(`${j.title} imported with ${j.photos} photos at $${(j.price || 0).toLocaleString()}${j.autoPriced ? ` (auto-priced — market median $${(j.market?.median || 0).toLocaleString()}, ${j.market?.count} comps)` : ''} — status "${j.status}".`, { id: toastId, duration: 10000 });
     } catch (e: any) {
       toast.error(`Import failed: ${e.message}`, { id: toastId, duration: 8000 });
     } finally {
