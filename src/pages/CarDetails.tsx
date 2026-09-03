@@ -1135,24 +1135,20 @@ export default function CarDetails() {
               </div>
             </motion.div>
 
-            {/* Carousel Gallery - Full Bleed on Mobile */}
-            {car.images && car.images.length > 0 && (
+            {/* Request More Photos — always available on thin galleries, even 1-photo cars */}
+            {(car.images?.length || 0) <= 3 && car.status !== 'Sold' && (
+              <div className="pt-4 px-3 md:px-0">
+                <button onClick={() => setPhotoReqOpen(true)}
+                  className="text-[13px] font-bold text-brand-accent border border-brand-accent/30 rounded-full px-4 py-2 hover:bg-brand-accent/5 transition">
+                  📸 Request More Photos
+                </button>
+              </div>
+            )}
+
+            {/* Carousel Gallery - Full Bleed on Mobile (pointless with a single photo) */}
+            {car.images && car.images.length > 1 && (
               <div className="space-y-3 px-0 md:px-0 pt-4 pb-0 -mx-3 md:mx-0">
-                <div className="hidden md:flex items-center justify-between px-3 md:px-0">
-                  <h3 className="text-[18px] font-bold text-slate-800">Vehicle Gallery</h3>
-                  {(car.images?.length || 0) <= 3 && car.status !== 'Sold' && (
-                    <button onClick={() => setPhotoReqOpen(true)}
-                      className="text-[13px] font-bold text-brand-accent border border-brand-accent/30 rounded-full px-4 py-1.5 hover:bg-brand-accent/5 transition">
-                      📸 Request More Photos
-                    </button>
-                  )}
-                </div>
-                {(car.images?.length || 0) <= 3 && car.status !== 'Sold' && (
-                  <button onClick={() => setPhotoReqOpen(true)}
-                    className="md:hidden mx-3 text-[13px] font-bold text-brand-accent border border-brand-accent/30 rounded-full px-4 py-2 hover:bg-brand-accent/5 transition">
-                    📸 Request More Photos
-                  </button>
-                )}
+                <h3 className="hidden md:block text-[18px] font-bold text-slate-800 px-3 md:px-0">Vehicle Gallery</h3>
                 <div className="relative group">
                   <div 
                     ref={carouselRef}
