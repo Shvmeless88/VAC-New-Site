@@ -5142,6 +5142,26 @@ async function startServer() {
         const olMedia = ([...(j.media || []), ...(j.conditionMedia || [])] as any[]).filter((m) => m?.url && m.type !== "Video").slice(0, 45);
         car.photoUrls = olMedia.map((m) => m.url);
         car.photoCaptions = olMedia.map((m) => String(m.caption || ""));
+        // OpenLane's API carries no VIN — but the photo set includes a VIN sticker.
+        // Read it with a quick vision pass (fail-soft: no VIN is better than a wrong one).
+        if (!car.vin && process.env.GEMINI_API_KEY) {
+          try {
+            const vinShot = olMedia.find((m) => /vin/i.test(String(m.caption || "")));
+            if (vinShot) {
+              const vr = await fetchWithTimeout(vinShot.url, { headers: { "User-Agent": UA } }, 20000);
+              const vb = Buffer.from(await vr.arrayBuffer()).toString("base64");
+              const gr = await fetchWithTimeout(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+                { method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ contents: [{ parts: [
+                    { text: `Read the 17-character VIN from this vehicle VIN sticker photo. VINs never contain the letters I, O, or Q. Reply ONLY with the VIN, or NONE if unreadable.` },
+                    { inlineData: { mimeType: "image/jpeg", data: vb } }] }] }) }, 45000);
+              const gj: any = await gr.json().catch(() => ({}));
+              const txt = (gj?.candidates?.[0]?.content?.parts || []).map((x: any) => x.text || "").join("").toUpperCase();
+              const m2 = txt.match(/[A-HJ-NPR-Z0-9]{17}/);
+              if (m2) { car.vin = m2[0]; console.log(`[AUCTION-IMPORT] VIN read from sticker photo: ${car.vin}`); }
+            }
+          } catch (ve) { console.error("[AUCTION-IMPORT] VIN OCR skipped:", (ve as any)?.message); }
+        }
       } else {
         return res.status(400).json({ error: "Unrecognized link. Paste an eBlock share link (graph.eblock.com/share/…) or an OpenLane public vehicle link (app.openlane.ca/vdp/retail/public/…)." });
       }
