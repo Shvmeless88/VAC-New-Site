@@ -5024,6 +5024,45 @@ async function startServer() {
       if (!cur.exists) Object.assign(upd, { stage: "new_lead", owner: null, ownerName: null, addTime: nowIso2, source: "photo-request", title: name, searchTokens: tokensFor({ firstName: parts[0], lastName: parts.slice(1).join(" ") }) });
       else if (prevStage2 === "free_to_call" || prevStage2 === "lost") Object.assign(upd, { stage: "new_lead", owner: null, ownerName: null, dnc: false, releasedAt: null, releasedFrom: null, releasedFromName: null });
       await ref.set(upd, { merge: true });
+
+      // Dual-write to Pipedrive — the team works there during beta, so the lead must
+      // surface in their world too (person by phone → lead → note; n8n round-robin
+      // routes it to a rep like any other website lead).
+      try {
+        const apiToken = process.env.PIPEDRIVE_API_TOKEN;
+        if (apiToken) {
+          let personId = await findPipedrivePerson(apiToken, undefined, phoneRaw);
+          if (!personId) {
+            const pr = await fetchWithTimeout(`https://api.pipedrive.com/v1/persons?api_token=${apiToken}`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name, phone: [phoneRaw] }),
+            });
+            personId = (await pr.json())?.data?.id;
+          }
+          const existing = personId ? await findRecentOpenPipedriveLead(apiToken, personId) : null;
+          let leadId = existing ? existing.id : null;
+          if (!leadId && personId) {
+            const leadPayload: any = {
+              title: `${name} — photo request`, person_id: personId,
+              "daee3baeeba75f1262c5a59c2d5fae9e0ab9824b": parts[0],
+              "9902ecfb207e316c980c1264d302e7e48a86bf4a": phoneRaw,
+            };
+            const ln = parts.slice(1).join(" ");
+            if (ln) leadPayload["45db65ef76c70f04bd5c6a161e4d48b3e3fb52b8"] = ln;
+            const lr = await fetchWithTimeout(`https://api.pipedrive.com/v1/leads?api_token=${apiToken}`, {
+              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(leadPayload),
+            });
+            leadId = (await lr.json())?.data?.id;
+          }
+          if (leadId) {
+            await fetchWithTimeout(`https://api.pipedrive.com/v1/notes?api_token=${apiToken}`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ content: `📸 <b>Requested more photos</b> of ${vehicle || "a vehicle"}${link ? `<br><a href="${link}">${link}</a>` : ""}`, lead_id: leadId }),
+            });
+          }
+        }
+      } catch (pe: any) { console.error("[PHOTO-REQUEST] pipedrive dual-write failed:", pe?.message); }
+
       return res.json({ ok: true });
     } catch (e: any) {
       console.error("[PHOTO-REQUEST]", e);
