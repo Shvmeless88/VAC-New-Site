@@ -106,6 +106,15 @@ import { Textarea } from '@/components/ui/textarea';
 import CarLoanCalculator from '@/components/calculator/CarLoanCalculator';
 import VirtualTourWidget from '@/components/widgets/VirtualTourWidget';
 
+// Shared phone mask — same live "(902) 555-0199" formatting as the application forms.
+const formatPhoneShared = (value: string) => {
+  if (!value) return value;
+  const digits = value.replace(/[^\d]/g, '');
+  if (digits.length < 4) return digits;
+  if (digits.length < 7) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+};
+
 function CheckAvailabilityDialog({ car }: { car: Car }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -1545,7 +1554,7 @@ export default function CarDetails() {
                   <p className="text-sm text-slate-500 mt-1 mb-4">Tell us where to text them — we&rsquo;ll send current photos of the {carTitle}.</p>
                   <input value={photoReqName} onChange={(e) => setPhotoReqName(e.target.value)} placeholder="Your name"
                     className="w-full h-11 rounded-xl border border-slate-200 px-3.5 text-sm mb-2 outline-none focus:border-brand-accent" />
-                  <input value={photoReqPhone} onChange={(e) => setPhotoReqPhone(e.target.value)} placeholder="Phone number" type="tel"
+                  <input value={photoReqPhone} onChange={(e) => setPhotoReqPhone(formatPhoneShared(e.target.value))} placeholder="(902) 555-0199" type="tel"
                     className="w-full h-11 rounded-xl border border-slate-200 px-3.5 text-sm mb-3 outline-none focus:border-brand-accent" />
                   {photoReqState === 'error' && <p className="text-xs text-red-500 mb-2">Please enter your name and a valid phone number.</p>}
                   <button onClick={submitPhotoRequest} disabled={photoReqState === 'sending'}
