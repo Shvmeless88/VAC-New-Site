@@ -5170,6 +5170,36 @@ async function startServer() {
       } else {
         return res.status(400).json({ error: "Unrecognized link. Paste an eBlock share link (graph.eblock.com/share/…) or an OpenLane public vehicle link (app.openlane.ca/vdp/retail/public/…)." });
       }
+      // Normalize bodyStyle into the site's enum (SUV/Sedan/Truck/Hatchback/Van/
+      // Convertible) — the Shop-by-Style tiles and inventory filters exact-match on
+      // it. eBlock's "Body type" label is free text ("Sport Utility", "Crew Cab
+      // Pickup"…) and OpenLane's API has no body field at all, which left imports
+      // blank and invisible to every body filter.
+      {
+        const raw = `${car.bodyStyle} ${car.trim}`.toLowerCase();
+        const model = String(car.model || "").toLowerCase();
+        const MODEL_BODY: [RegExp, string][] = [
+          [/f-?150|f-?250|1500|2500|silverado|sierra|ranger|colorado|canyon|tundra|tacoma|frontier|titan|gladiator|ridgeline|maverick/, "Truck"],
+          [/caravan|pacifica|sienna|odyssey|carnival|transit|savana|express|promaster/, "Van"],
+          [/rogue|kicks|qashqai|murano|pathfinder|armada|tucson|santa fe|palisade|venue|kona|seltos|soul|sportage|sorento|telluride|niro|trailblazer|trax|equinox|traverse|tahoe|blazer|envision|encore|enclave|edge|escape|explorer|expedition|bronco|cherokee|wrangler|compass|renegade|durango|crosstrek|forester|outback|ascent|rav4|highlander|4runner|venza|corolla cross|taos|tiguan|atlas|passport|pilot|cr-?v|hr-?v|rdx|mdx|cx-|rvr|outlander|eclipse cross|santa cruz/, "SUV"],
+          [/civic|corolla|camry|elantra|sonata|accent|sentra|versa|altima|maxima|malibu|cruze|k4|k5|forte|rio|jetta|passat|accord|mazda3|impreza(?! .*hatch)|legacy|530i|3 series|5 series|a4|c-class|fusion|focus(?! .*hatch)|charger|300/, "Sedan"],
+          [/prius|golf|leaf|bolt|micra|fit|yaris|swift|spark|veloster/, "Hatchback"],
+        ];
+        const fromRaw =
+          /pickup|crew cab|quad cab|reg(ular)? cab|truck/.test(raw) ? "Truck" :
+          /sport utility|\bsuv\b|utility/.test(raw) ? "SUV" :
+          /minivan|\bvan\b/.test(raw) ? "Van" :
+          /hatch/.test(raw) ? "Hatchback" :
+          /convertible|cabriolet|roadster/.test(raw) ? "Convertible" :
+          /sedan|saloon|coupe/.test(raw) ? "Sedan" :
+          /wagon/.test(raw) ? "SUV" : "";
+        const fromModel = MODEL_BODY.find(([re]) => re.test(model))?.[1] || "";
+        // Model identity beats auction free text (their labels are unreliable);
+        // raw text fills in for models we have not seen before.
+        car.bodyStyle = fromModel || fromRaw || car.bodyStyle || "";
+        if (!["SUV", "Sedan", "Truck", "Hatchback", "Van", "Convertible"].includes(car.bodyStyle)) car.bodyStyle = fromRaw || "SUV";
+      }
+
       // Dedupe: the same physical car must never list twice. If a non-sold
       // listing already carries this VIN, refuse and point at it.
       if (car.vin) {
