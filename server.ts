@@ -5170,6 +5170,16 @@ async function startServer() {
       } else {
         return res.status(400).json({ error: "Unrecognized link. Paste an eBlock share link (graph.eblock.com/share/…) or an OpenLane public vehicle link (app.openlane.ca/vdp/retail/public/…)." });
       }
+      // Dedupe: the same physical car must never list twice. If a non-sold
+      // listing already carries this VIN, refuse and point at it.
+      if (car.vin) {
+        const dup = await db.collection("inventory").where("vin", "==", car.vin).limit(3).get();
+        const live = dup.docs.find((d2: any) => d2.get("status") !== "Sold");
+        if (live) {
+          return res.status(409).json({ error: `Already listed: ${live.get("year")} ${live.get("make")} ${live.get("model")} (VIN ${car.vin}) — edit that listing instead of importing again.`, existingId: live.id });
+        }
+      }
+
       const title = [car.year, car.make, car.model, car.trim].filter(Boolean).join(" ");
 
       // eBlock photos arrive in page order with damage close-ups near the front —
