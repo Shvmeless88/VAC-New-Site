@@ -5114,10 +5114,15 @@ async function startServer() {
         car.transmission = field("Transmission"); car.engine = field("Engine").replace(/\s+/g, " "); car.drivetrain = field("Drivetrain"); car.fuelType = field("Fuel Type");
         const opt = html.match(/Options\s*<\/h2>([\s\S]*?)<h2/i);
         if (opt) car.features = Array.from(new Set(Array.from(opt[1].matchAll(/<[^>]+>([A-Za-z][^<>{}]{2,40})<\//g)).map((m: any) => m[1].trim()))).slice(0, 40);
-        const raw = Array.from(html.matchAll(/https:\/\/media\.prod\.eblock\.e\.inc\/[^"'\s)]+\/images\/([A-Z0-9]+)\.jpg/g)) as any[];
+        const raw = Array.from(html.matchAll(/https:\/\/media\.prod\.eblock\.e\.inc\/[^"'\s)]*?\/([0-9a-f-]{36})\/images\/([A-Z0-9]+)\.jpg/g)) as any[];
+        // A share page can embed OTHER listings' photos (similar-vehicle modules).
+        // Photos are grouped by a listing UUID in the URL — keep only the dominant group.
+        const groupCount = new Map<string, number>();
+        for (const m of raw) groupCount.set(m[1], (groupCount.get(m[1]) || 0) + 1);
+        const mainGroup = [...groupCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
         const seen = new Set<string>();
         for (const m of raw) {
-          if (seen.has(m[1])) continue; seen.add(m[1]);
+          if (m[1] !== mainGroup || seen.has(m[2])) continue; seen.add(m[2]);
           car.photoUrls.push(String(m[0]).replace(/w_\d+,h_\d+/, "w_1600,h_1200"));
         }
       } else if (olPublic) {
@@ -5165,6 +5170,8 @@ async function startServer() {
       } else {
         return res.status(400).json({ error: "Unrecognized link. Paste an eBlock share link (graph.eblock.com/share/…) or an OpenLane public vehicle link (app.openlane.ca/vdp/retail/public/…)." });
       }
+      const title = [car.year, car.make, car.model, car.trim].filter(Boolean).join(" ");
+
       // eBlock photos arrive in page order with damage close-ups near the front —
       // classify them once and reorder the gallery: exteriors, interior, details,
       // documents, damage last. (OpenLane's media list already orders naturally.)
@@ -5173,7 +5180,7 @@ async function startServer() {
           const gk2 = process.env.GEMINI_API_KEY;
           const thumbs2: string[] = car.photoUrls.map((u: string) => u.replace(/w_\d+,h_\d+/, "w_400,h_300"));
           const n2 = Math.min(thumbs2.length, 24);
-          const parts2: any[] = [{ text: `These ${n2} photos of one car are numbered 0-${n2 - 1} in order. Reply ONLY with JSON: {"front34": <index of the best clean DRIVER-SIDE front three-quarter exterior shot (vehicle nose pointing LEFT); if none, the best front three-quarter of either side; or -1>, "cats": [<one category per photo, in order: "exterior" | "interior" | "detail" | "damage" | "document">]}. "damage" = close-ups of scratches/dents/chips; "document" = window stickers, VIN plates, odometer readouts; "detail" = wheels, engine bay, badges.` }];
+          const parts2: any[] = [{ text: `These ${n2} photos are numbered 0-${n2 - 1} in order and should all show one vehicle: a ${title}. Mark any photo of a DIFFERENT vehicle as "damage" so it sorts last. Reply ONLY with JSON: {"front34": <index of the best clean DRIVER-SIDE front three-quarter exterior shot (vehicle nose pointing LEFT); if none, the best front three-quarter of either side; or -1>, "cats": [<one category per photo, in order: "exterior" | "interior" | "detail" | "damage" | "document">]}. "damage" = close-ups of scratches/dents/chips; "document" = window stickers, VIN plates, odometer readouts; "detail" = wheels, engine bay, badges.` }];
           for (let i = 0; i < n2; i++) {
             const rr = await fetchWithTimeout(thumbs2[i], { headers: { "User-Agent": UA } }, 20000);
             parts2.push({ inlineData: { mimeType: "image/jpeg", data: Buffer.from(await rr.arrayBuffer()).toString("base64") } });
@@ -5202,8 +5209,6 @@ async function startServer() {
       }
 
       if (!car.year || !car.make) return res.status(422).json({ error: "Could not read the vehicle from that page.", parsed: car });
-
-      const title = [car.year, car.make, car.model, car.trim].filter(Boolean).join(" ");
 
       // ---- Competitive Atlantic-Canada pricing. Maritime comps first; thin sample →
       // Canada-wide median with a small Atlantic uplift. Suggestion only becomes the
@@ -5372,7 +5377,7 @@ async function startServer() {
             // eBlock: pick angles by eye, from SMALL thumbnails (full-size blows the request cap).
             const thumbs: string[] = (car.photoUrls as string[]).map((u: string) => u.replace(/w_\d+,h_\d+/, "w_400,h_300"));
             const sampleN = Math.min(thumbs.length, 24);
-            const sampleParts: any[] = [{ text: `These ${sampleN} photos of the same car are numbered 0-${sampleN - 1} in order. Reply ONLY with a JSON object mapping these keys to the best photo index (or -1 if that angle is missing): ${SLOTS.map((s2) => s2.key + " = " + s2.angle).join("; ")}. Example: {"front34":0,"rear34":3,"side":-1,"dash":5,"frontseats":8}. Only assign an index if that photo GENUINELY shows that angle — use -1 rather than a near-miss. Prefer clean, well-lit, complete shots; never pick close-ups of damage for exterior slots.` }];
+            const sampleParts: any[] = [{ text: `These ${sampleN} photos are numbered 0-${sampleN - 1} in order. They should all show the same vehicle: a ${title}. Some photos may accidentally show a DIFFERENT vehicle — never pick those. Reply ONLY with a JSON object mapping these keys to the best photo index (or -1 if that angle is missing): ${SLOTS.map((s2) => s2.key + " = " + s2.angle).join("; ")}. Example: {"front34":0,"rear34":3,"side":-1,"dash":5,"frontseats":8}. Only assign an index if that photo GENUINELY shows that angle — use -1 rather than a near-miss. Prefer clean, well-lit, complete shots; never pick close-ups of damage for exterior slots.` }];
             for (let i = 0; i < sampleN; i++) {
               try { sampleParts.push({ inlineData: { mimeType: "image/jpeg", data: (await fetchBuf(thumbs[i])).toString("base64") } }); }
               catch { sampleParts.push({ text: `(photo ${i} unavailable)` }); }
@@ -5416,7 +5421,7 @@ async function startServer() {
               // if the model invented a car, throw the shot away.
               try {
                 const verdict = String(await gemini([
-                  { text: `Photo A and photo B: do they show the exact same vehicle (same colour, body style, wheels, trim)? Ignore the background. Reply ONLY JSON: {"same":true} or {"same":false}.` },
+                  { text: `Photo A and photo B: (1) do they show the exact same vehicle (same colour, body style, wheels, trim)? (2) Is that vehicle a ${title}? Both must be true. Ignore the background. Reply ONLY JSON: {"same":true} or {"same":false}.` },
                   { inlineData: { mimeType: "image/jpeg", data: srcBuf.toString("base64") } },
                   { inlineData: { mimeType: "image/jpeg", data: outBuf.toString("base64") } },
                 ], false));
