@@ -258,9 +258,10 @@ export default function Home() {
               <span>from 416 Google reviews</span>
             </div>
 
-            {/* Trust chips */}
+            {/* Trust chips — no repeats of the rate/no-obligation lines already in
+                the badge and paragraph a few lines up */}
             <div className="flex flex-wrap gap-2 mb-4 md:mb-12">
-              {['Rates from 6.99% O.A.C.', 'Every credit situation', 'No obligation', '150-point inspected'].map((t) => (
+              {['Every credit situation', '150-point inspected', 'VAC warranty included'].map((t) => (
                 <span key={t} className="inline-flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 border border-slate-100 px-3 py-1.5 rounded-lg">
                   <CheckCircle className="h-3.5 w-3.5 text-green-500" />
                   {t}
@@ -494,35 +495,21 @@ export default function Home() {
 
           <div className="max-w-6xl mx-auto relative z-10">
             <div className="grid grid-cols-3 gap-2 md:gap-8 divide-x divide-white/5">
-              <div
-                className="flex flex-col items-center text-center px-2 md:px-4 group"
-              >
-                <div className="h-10 w-10 md:h-12 md:w-12 mb-3 md:mb-6 rounded-[0.8rem] md:rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center group-hover:scale-110 group-hover:bg-brand-secondary/20 group-hover:border-brand-secondary/30 transition-all duration-500 shadow-2xl shadow-brand-secondary/10 backdrop-blur-sm">
-                  <Star className="h-5 w-5 md:h-6 md:w-6 text-brand-secondary fill-brand-secondary group-hover:drop-shadow-[0_0_15px_rgba(115,128,255,0.5)] transition-all" />
+              {/* Real, hard numbers — the rating already shows live in the reviews
+                  section, so this bar carries the stats no other section states. */}
+              {[
+                { Icon: TrendingUp, value: '5,000+', label: 'Vehicles Delivered' },
+                { Icon: MapPin, value: '8+ Years', label: 'Serving Atlantic Canada' },
+                { Icon: CreditCard, value: '15+', label: 'Lending Partners' },
+              ].map(({ Icon, value, label }) => (
+                <div key={label} className="flex flex-col items-center text-center px-2 md:px-4 group">
+                  <div className="h-10 w-10 md:h-12 md:w-12 mb-3 md:mb-6 rounded-[0.8rem] md:rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center group-hover:scale-110 group-hover:bg-brand-secondary/20 group-hover:border-brand-secondary/30 transition-all duration-500 shadow-2xl shadow-brand-secondary/10 backdrop-blur-sm">
+                    <Icon className="h-5 w-5 md:h-6 md:w-6 text-brand-secondary group-hover:drop-shadow-[0_0_15px_rgba(115,128,255,0.5)] transition-all" />
+                  </div>
+                  <p className="font-display font-bold text-white text-[13px] md:text-xl lg:text-3xl mb-1 md:mb-3 tracking-tight leading-none">{value}</p>
+                  <p className="text-[8px] md:text-xs text-brand-secondary/80 font-bold uppercase tracking-[0.1em] md:tracking-[0.25em] max-w-[200px] leading-relaxed">{label}</p>
                 </div>
-                <p className="font-display font-bold text-white text-[13px] md:text-xl lg:text-3xl mb-1 md:mb-3 tracking-tight leading-none">4.5/5 Rating</p>
-                <p className="text-[8px] md:text-xs text-brand-secondary/80 font-bold uppercase tracking-[0.1em] md:tracking-[0.25em] max-w-[200px] leading-relaxed">Google Reviews</p>
-              </div>
-
-              <div
-                className="flex flex-col items-center text-center px-2 md:px-4 group"
-              >
-                <div className="h-10 w-10 md:h-12 md:w-12 mb-3 md:mb-6 rounded-[0.8rem] md:rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center group-hover:scale-110 group-hover:bg-brand-secondary/20 group-hover:border-brand-secondary/30 transition-all duration-500 shadow-2xl shadow-brand-secondary/10 backdrop-blur-sm">
-                  <Truck className="h-5 w-5 md:h-6 md:w-6 text-brand-secondary group-hover:drop-shadow-[0_0_15px_rgba(115,128,255,0.5)] transition-all" />
-                </div>
-                <p className="font-display font-bold text-white text-[13px] md:text-xl lg:text-3xl mb-1 md:mb-3 tracking-tight leading-none">Fast Delivery</p>
-                <p className="text-[8px] md:text-xs text-brand-secondary/80 font-bold uppercase tracking-[0.1em] md:tracking-[0.25em] max-w-[200px] leading-relaxed">Atlantic Canada</p>
-              </div>
-
-              <div
-                className="flex flex-col items-center text-center px-2 md:px-4 group"
-              >
-                <div className="h-10 w-10 md:h-12 md:w-12 mb-3 md:mb-6 rounded-[0.8rem] md:rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center group-hover:scale-110 group-hover:bg-brand-secondary/20 group-hover:border-brand-secondary/30 transition-all duration-500 shadow-2xl shadow-brand-secondary/10 backdrop-blur-sm">
-                  <ShieldCheck className="h-5 w-5 md:h-6 md:w-6 text-brand-secondary group-hover:drop-shadow-[0_0_15px_rgba(115,128,255,0.5)] transition-all" />
-                </div>
-                <p className="font-display font-bold text-white text-[13px] md:text-xl lg:text-3xl mb-1 md:mb-3 tracking-tight leading-none">Protected</p>
-                <p className="text-[8px] md:text-xs text-brand-secondary/80 font-bold uppercase tracking-[0.1em] md:tracking-[0.25em] max-w-[200px] leading-relaxed">150-Point Check</p>
-              </div>
+              ))}
             </div>
           </div>
         </div>
@@ -702,43 +689,10 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Peace of Mind Section */}
-      <motion.section 
-        initial={{ opacity: 0, y: 40 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true }}
-        transition={{ duration: 0.8, ease: "easeOut" }}
-        className="py-14 md:py-24 bg-white"
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h2 className="text-4xl md:text-6xl font-display font-bold text-brand-primary text-center mb-20">
-            Peace of Mind, Guaranteed
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
-            <div className="bg-white p-10 rounded-[2.5rem] shadow-sm border border-gray-100 hover:shadow-xl transition-all duration-500 group">
-              <div className="h-16 w-16 bg-[#7380FF]/5 rounded-2xl flex items-center justify-center mb-8 group-hover:bg-[#7380FF] group-hover:text-white transition-all duration-500">
-                <ShieldCheck className="h-8 w-8 text-[#7380FF] group-hover:text-white" />
-              </div>
-              <h3 className="text-2xl font-bold text-brand-primary mb-4">VAC Warranty Included</h3>
-              <p className="text-gray-500 text-lg leading-relaxed">Every vehicle is backed by a comprehensive warranty — drive off with total confidence, not fingers crossed.</p>
-            </div>
-            <div className="bg-white p-10 rounded-[2.5rem] shadow-sm border border-gray-100 hover:shadow-xl transition-all duration-500 group">
-              <div className="h-16 w-16 bg-[#7380FF]/5 rounded-2xl flex items-center justify-center mb-8 group-hover:bg-[#7380FF] group-hover:text-white transition-all duration-500">
-                <Truck className="h-8 w-8 text-[#7380FF] group-hover:text-white" />
-              </div>
-              <h3 className="text-2xl font-bold text-brand-primary mb-4">Delivered to Your Door</h3>
-              <p className="text-gray-500 text-lg leading-relaxed">We bring your vehicle to you anywhere in Nova Scotia, New Brunswick, PEI, and Newfoundland — no dealership visit required.</p>
-            </div>
-            <div className="bg-white p-10 rounded-[2.5rem] shadow-sm border border-gray-100 hover:shadow-xl transition-all duration-500 group">
-              <div className="h-16 w-16 bg-[#7380FF]/5 rounded-2xl flex items-center justify-center mb-8 group-hover:bg-[#7380FF] group-hover:text-white transition-all duration-500">
-                <TrendingUp className="h-8 w-8 text-[#7380FF] group-hover:text-white" />
-              </div>
-              <h3 className="text-2xl font-bold text-brand-primary mb-4">Transparent Pricing</h3>
-              <p className="text-gray-500 text-lg leading-relaxed">Real market-checked prices and clear bi-weekly payments up front. No haggling, no surprise fees at the finish line.</p>
-            </div>
-          </div>
-        </div>
-      </motion.section>
+      {/* "Peace of Mind" section removed 2026-09-05: its three points (warranty,
+          delivery, pricing) already appear in the hero chips, How It Works step 3,
+          and the market-price badges on every card — it was the page's third
+          restatement of the same message. */}
 
       {/* Final CTA */}
       <section className="py-16 md:py-32 bg-[#41456B] relative overflow-hidden">
