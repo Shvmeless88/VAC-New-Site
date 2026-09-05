@@ -5,6 +5,7 @@ import { calculateBiWeeklyPayment, cn, getVehicleUrl, maxFinancingTerm } from '@
 import { useInventory } from '@/hooks/useInventory';
 import { useSoldStories } from '@/hooks/useSoldStories';
 import CarCard from '@/components/inventory/CarCard';
+import ElfsightReviews from '@/components/ElfsightReviews';
 import CarLoanCalculator from '@/components/calculator/CarLoanCalculator';
 import MobileCTABar from '@/components/layout/MobileCTABar';
 import { motion } from 'motion/react';
@@ -32,40 +33,6 @@ import {
   TrendingUp,
   Car as CarIcon
 } from 'lucide-react';
-
-// Elfsight All-in-One Reviews (real 5-star Google + Facebook reviews, auto-synced).
-// Lazy: the platform.js script is injected only when the section nears the viewport,
-// so the third-party widget can never slow down first paint.
-function ElfsightReviews() {
-  const holder = React.useRef<HTMLDivElement>(null);
-  const [load, setLoad] = React.useState(false);
-  useEffect(() => {
-    const el = holder.current;
-    if (!el) return;
-    const obs = new IntersectionObserver((entries) => {
-      if (entries.some(e => e.isIntersecting)) {
-        setLoad(true);
-        obs.disconnect();
-      }
-    }, { rootMargin: '600px' });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
-  useEffect(() => {
-    if (!load) return;
-    if (!document.querySelector('script[src="https://elfsightcdn.com/platform.js"]')) {
-      const s = document.createElement('script');
-      s.src = 'https://elfsightcdn.com/platform.js';
-      s.async = true;
-      document.body.appendChild(s);
-    }
-  }, [load]);
-  return (
-    <div ref={holder} className="min-h-[400px]">
-      {load && <div className="elfsight-app-9db6caed-1e35-4f55-9a80-5843a9e10e19" data-elfsight-app-lazy />}
-    </div>
-  );
-}
 
 const stats = [
   { label: 'Vehicles Delivered', value: '5,000+' },
