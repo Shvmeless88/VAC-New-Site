@@ -16,7 +16,8 @@ interface CarCardProps {
 export default React.memo(function CarCard({ car, hideSoldDate = false }: CarCardProps) {
   // Bi-weekly payment at 6.99% over the LONGEST TERM this year/km combo actually
   // qualifies for (lender rate sheets); null = not financeable, hide the payment.
-  const financeTerm = maxFinancingTerm(Number(car.year), Number(car.mileage));
+  const hasPrice = Number(car.price) > 0;
+  const financeTerm = hasPrice ? maxFinancingTerm(Number(car.year), Number(car.mileage)) : null;
   const biWeekly = financeTerm ? calculateBiWeeklyPayment(Number(car.price), 6.99, financeTerm) : 0;
 
   const formatSoldDate = (soldAt: any) => {
@@ -135,7 +136,7 @@ export default React.memo(function CarCard({ car, hideSoldDate = false }: CarCar
                     <span className="text-xs font-bold text-[#64748B]">Contact us for financing</span>
                   )}
                   <span className="text-sm font-bold text-[#64748B]">
-                    ${(car.price || 0).toLocaleString()}
+                    {hasPrice ? `$${(car.price || 0).toLocaleString()}` : 'Call for Price'}
                   </span>
                   {/* Market-position badge — only shown for competitive prices.
                       "High Price" is never surfaced publicly (it would tell a

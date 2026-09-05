@@ -5222,7 +5222,7 @@ async function startServer() {
             u.searchParams.set("api_key", mcKey); u.searchParams.set("country", "CA");
             if (opts.yearSpread) u.searchParams.set("year_range", `${car.year - 1}-${car.year + 1}`);
             else u.searchParams.set("year", String(car.year));
-            u.searchParams.set("make", String(car.make)); u.searchParams.set("model", String(car.model));
+            u.searchParams.set("make", String(car.make)); u.searchParams.set("model", String((car as any).compsModel || car.model));
             if (opts.provinces) u.searchParams.set("state", opts.provinces);
             if (opts.kmBand && car.mileage) u.searchParams.set("miles_range", `${Math.max(0, car.mileage - 35000)}-${car.mileage + 35000}`);
             u.searchParams.set("stats", "price"); u.searchParams.set("rows", "0");
@@ -5232,6 +5232,9 @@ async function startServer() {
             const st = cj?.data?.stats?.price || cj?.stats?.price;
             return st?.median ? { median: Number(st.median), count: Number(st.count || 0), low: st.min, high: st.max } : null;
           };
+          // MarketCheck sometimes bakes the make into the model name ("Ram 1500
+          // Classic"); try the plain model first, then the make-prefixed variant.
+          const modelCandidates = [String(car.model), `${car.make} ${car.model}`];
           // Canada's sample sizes are thin — widen progressively until credible.
           const ladders: { o: any; need: number; scope: string; adj: number }[] = [
             { o: { provinces: "NS,NB,PE,NL", yearSpread: false, kmBand: true }, need: 8, scope: "atlantic", adj: 1 },
@@ -5240,9 +5243,12 @@ async function startServer() {
             { o: { yearSpread: true, kmBand: true }, need: 10, scope: "canada±1yr+5%", adj: 1.05 },
             { o: { yearSpread: true, kmBand: false }, need: 10, scope: "canada±1yr-anykm+5%", adj: 1.05 },
           ];
-          for (const step of ladders) {
-            const c2 = await comps(step.o);
-            if (c2 && c2.count >= step.need) { market = { ...c2, median: Math.round(c2.median * step.adj), scope: step.scope }; break; }
+          outer: for (const mc2 of modelCandidates) {
+            (car as any).compsModel = mc2;
+            for (const step of ladders) {
+              const c2 = await comps(step.o);
+              if (c2 && c2.count >= step.need) { market = { ...c2, median: Math.round(c2.median * step.adj), scope: step.scope }; break outer; }
+            }
           }
           if (market) {
             // dealer price point: nearest $500, minus $5 → …,995 / …,495
@@ -5486,6 +5492,7 @@ async function startServer() {
       inventorySnapshot.forEach((doc) => {
         const car = doc.data();
         if (car.status === 'Sold') return;
+        if (!car.price || car.price === 0) return;   // never publish a fake/placeholder price
  
         const id = doc.id;
         const vin = car.vin || id;
@@ -5558,6 +5565,7 @@ async function startServer() {
       inventorySnapshot.forEach((doc) => {
         const car = doc.data();
         if (car.status === 'Sold') return;
+        if (!car.price || car.price === 0) return;   // never publish a fake/placeholder price
 
         const id = doc.id;
         const title = `${car.year} ${car.make} ${car.model} ${car.trim || ''}`.trim();
@@ -5620,6 +5628,7 @@ async function startServer() {
       inventorySnapshot.forEach((doc) => {
         const car = doc.data();
         if (car.status === 'Sold') return;
+        if (!car.price || car.price === 0) return;   // never publish a fake/placeholder price
  
         const id = doc.id;
         const title = `${car.year} ${car.make} ${car.model} ${car.trim || ''}`.trim();

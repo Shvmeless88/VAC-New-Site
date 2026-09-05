@@ -495,7 +495,7 @@ export default function Admin() {
     try {
       const updateData: any = {
         ...editingVehicle,
-        price: editingVehicle.price === 0 ? 19995 : editingVehicle.price,
+        price: editingVehicle.price,
         updatedAt: Timestamp.now()
       };
       
@@ -1540,8 +1540,8 @@ export default function Admin() {
 
       const vehicleData: any = {
         ...newVehicle,
-        price: newVehicle.price === 0 ? 19995 : newVehicle.price,
-        biWeekly: calculateBiWeekly(newVehicle.price === 0 ? 19995 : newVehicle.price),
+        price: newVehicle.price,
+        biWeekly: calculateBiWeekly(newVehicle.price),
         vin: newVehicle.vin.toUpperCase(),
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now()
@@ -1639,7 +1639,11 @@ export default function Admin() {
       });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || 'Import failed.');
-      toast.success(`${j.title} imported with ${j.photos} photos at $${(j.price || 0).toLocaleString()}${j.autoPriced ? ` (auto-priced — market median $${(j.market?.median || 0).toLocaleString()}, ${j.market?.count} comps)` : ''} — status "${j.status}".`, { id: toastId, duration: 10000 });
+      if (!j.price) {
+        toast.warning(`${j.title} imported with ${j.photos} photos — NO PRICE (no market data found). It shows "Call for Price" until you set one.`, { id: toastId, duration: 12000 });
+      } else {
+        toast.success(`${j.title} imported with ${j.photos} photos at $${(j.price || 0).toLocaleString()}${j.autoPriced ? ` (auto-priced — market median $${(j.market?.median || 0).toLocaleString()}, ${j.market?.count} comps)` : ''} — status "${j.status}".`, { id: toastId, duration: 10000 });
+      }
     } catch (e: any) {
       toast.error(`Import failed: ${e.message}`, { id: toastId, duration: 8000 });
     } finally {

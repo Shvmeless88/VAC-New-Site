@@ -878,7 +878,7 @@ export default function CarDetails() {
           setCar({ 
             id: carDoc.id, 
             ...data,
-            price: data.price === 0 ? 19995 : data.price
+            price: data.price
           } as Car);
         } else {
           setError('Vehicle not found.');
@@ -930,7 +930,7 @@ export default function CarDetails() {
     );
   }
 
-  const financeTerm = maxFinancingTerm(Number(car.year), Number(car.mileage));
+  const financeTerm = Number(car.price) > 0 ? maxFinancingTerm(Number(car.year), Number(car.mileage)) : null;
   const biWeekly = financeTerm ? calculateBiWeeklyPayment(Number(car.price), 6.99, financeTerm) : 0;
 
   const formatSoldDate = (soldAt: any) => {
@@ -1047,7 +1047,7 @@ export default function CarDetails() {
               )}
               <div className="flex items-center gap-1.5">
                 <span className="text-sm text-slate-500 font-bold">
-                  Cash Price: ${(car.price || 0).toLocaleString()}
+                  {Number(car.price) > 0 ? `Cash Price: $${(car.price || 0).toLocaleString()}` : 'Call for Price'}
                 </span>
               </div>
             </div>

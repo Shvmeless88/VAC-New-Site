@@ -20,7 +20,7 @@ export function useInventory() {
         return {
           id: doc.id,
           ...data,
-          price: data.price === 0 ? 19995 : data.price
+          price: data.price
         };
       }) as Car[];
       
