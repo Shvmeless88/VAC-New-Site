@@ -33,6 +33,40 @@ import {
   Car as CarIcon
 } from 'lucide-react';
 
+// Elfsight All-in-One Reviews (real 5-star Google + Facebook reviews, auto-synced).
+// Lazy: the platform.js script is injected only when the section nears the viewport,
+// so the third-party widget can never slow down first paint.
+function ElfsightReviews() {
+  const holder = React.useRef<HTMLDivElement>(null);
+  const [load, setLoad] = React.useState(false);
+  useEffect(() => {
+    const el = holder.current;
+    if (!el) return;
+    const obs = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting)) {
+        setLoad(true);
+        obs.disconnect();
+      }
+    }, { rootMargin: '600px' });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!load) return;
+    if (!document.querySelector('script[src="https://elfsightcdn.com/platform.js"]')) {
+      const s = document.createElement('script');
+      s.src = 'https://elfsightcdn.com/platform.js';
+      s.async = true;
+      document.body.appendChild(s);
+    }
+  }, [load]);
+  return (
+    <div ref={holder} className="min-h-[400px]">
+      {load && <div className="elfsight-app-9db6caed-1e35-4f55-9a80-5843a9e10e19" data-elfsight-app-lazy />}
+    </div>
+  );
+}
+
 const stats = [
   { label: 'Vehicles Delivered', value: '5,000+' },
   { label: 'Customer Rating', value: '4.5/5' },
@@ -647,64 +681,10 @@ export default function Home() {
 
           {/* Reviews — folded in from the old standalone "Customer Experiences" section */}
           <div className="mt-14 md:mt-24 pt-14 md:pt-24 border-t border-gray-100">
-            <div className="text-center mb-10 md:mb-16">
-              <div className="flex justify-center text-[#7380FF] mb-4 space-x-1">
-                {[1, 2, 3, 4].map((i) => <Star key={i} className="h-5 w-5 md:h-6 md:w-6 fill-current" />)}
-                <StarHalf className="h-5 w-5 md:h-6 md:w-6 fill-current" />
-              </div>
-              <p className="text-gray-400 font-bold uppercase tracking-[0.2em] text-xs">Rated 4.5/5 · 416 Google reviews</p>
-            </div>
-
-            <div
-              ref={testimonialsCarouselRef}
-              className="flex md:grid md:grid-cols-3 gap-4 md:gap-10 overflow-x-auto snap-x snap-mandatory [&::-webkit-scrollbar]:hidden pb-8 px-4 md:px-0"
-            >
-              {[
-                {
-                  name: "Jennifer L.",
-                  location: "Halifax, NS",
-                  text: "The best car buying experience I've ever had. No pressure, completely online, and they delivered my new SUV right to my door. Highly recommend VAC!",
-                },
-                {
-                  name: "Mark T.",
-                  location: "Moncton, NB",
-                  text: "I was worried about my credit, but VAC got me approved in minutes. The process was transparent and the car is in perfect condition.",
-                },
-                {
-                  name: "Robert S.",
-                  location: "St. John's, NL",
-                  text: "Incredible service. I did everything from my phone. The VAC warranty gave me the confidence to buy without seeing it in person first.",
-                },
-              ].map((review, i) => (
-                <motion.div
-                  key={i}
-                  ref={(el) => { testimonialsCardRefs.current[i] = el; }}
-                  data-index={i}
-                  initial={{ opacity: 0, y: 20 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ duration: 0.5, delay: i * 0.1 }}
-                  className="w-[calc(100vw-56px)] md:w-full flex-shrink-0 snap-center p-8 md:p-12 rounded-[2.5rem] bg-white border border-gray-100 shadow-sm hover:shadow-xl transition-all duration-500"
-                >
-                  <p className="text-gray-500 italic mb-10 leading-relaxed text-lg">"{review.text}"</p>
-                  <div>
-                    <p className="font-bold text-brand-primary uppercase tracking-widest text-sm mb-1">{review.name}</p>
-                    <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">{review.location}</p>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-            <div className="flex justify-center gap-2 md:hidden">
-              {[0, 1, 2].map((index) => (
-                <div
-                  key={index}
-                  className={cn(
-                    "h-2 rounded-full transition-all duration-300",
-                    index === activeTestimonialSlide ? "w-6 bg-brand-primary" : "w-2 bg-gray-300"
-                  )}
-                />
-              ))}
-            </div>
+            {/* Real, auto-synced 5-star reviews from Google + Facebook.
+                The widget shows its own live aggregate rating, so no static
+                stars header here (it would drift out of date). */}
+            <ElfsightReviews />
           </div>
         </div>
       </section>
