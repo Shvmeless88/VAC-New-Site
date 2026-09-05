@@ -130,6 +130,17 @@ export default function Home() {
   const testimonialsCardRefs = React.useRef<(HTMLDivElement | null)[]>([]);
   const featuredCars = inventory.filter(car => car.isFeatured).slice(0, 3);
 
+  // Shop-by-Style tiles: live count per body style + the newest hero image for
+  // that style as the tile background. Styles with no stock are hidden.
+  const styleTiles = React.useMemo(() => {
+    return bodyStyles.map(s => {
+      const cars = inventory.filter(c =>
+        c.bodyStyle === s.name && c.status !== 'Sold' && c.status !== 'Pending Sale');
+      const withImg = cars.find(c => c.images?.[0]);
+      return { ...s, count: cars.length, image: withImg?.images?.[0] };
+    }).filter(t => t.count > 0);
+  }, [inventory]);
+
   // Newest arrivals, auto-populated — the owner buys daily and the freshest cars
   // are the draw. No admin flag needed: anything For Sale, newest createdAt first.
   const justLanded = React.useMemo(() => {
@@ -251,12 +262,17 @@ export default function Home() {
               </Button>
             </div>
 
-            {/* Social proof, right next to the CTA */}
-            <div className="flex items-center gap-2 mb-6 text-sm text-slate-500">
+            {/* Social proof, right next to the CTA — numbers match the live widget
+                (4.4 across Google + Facebook); clicking jumps to the reviews. */}
+            <button
+              type="button"
+              onClick={() => document.getElementById('vac-reviews')?.scrollIntoView({ behavior: 'smooth' })}
+              className="flex items-center gap-2 mb-6 text-sm text-slate-500 hover:text-slate-700 transition-colors"
+            >
               <span className="text-amber-400 tracking-wide text-base">★★★★<span className="text-slate-300">★</span></span>
-              <span className="font-bold text-brand-primary">4.5</span>
-              <span>from 416 Google reviews</span>
-            </div>
+              <span className="font-bold text-brand-primary">4.4</span>
+              <span className="underline underline-offset-4 decoration-slate-300">from 650+ reviews on Google & Facebook</span>
+            </button>
 
             {/* Trust chips — no repeats of the rate/no-obligation lines already in
                 the badge and paragraph a few lines up */}
@@ -364,7 +380,7 @@ export default function Home() {
                   Just Landed
                 </div>
                 <h2 className="text-2xl md:text-5xl font-display font-bold text-brand-primary tracking-tight mb-2 md:mb-3">
-                  Fresh Off the Truck
+                  Fresh On the Lot
                 </h2>
                 <p className="text-gray-500 text-base md:text-lg">
                   New arrivals hit our showroom daily — these are the latest.
@@ -398,7 +414,9 @@ export default function Home() {
         </motion.section>
       )}
 
-      {/* Popular Inventory */}
+      {/* Shop by Style — replaced the manual "Popular Inventory" carousel
+          2026-09-05 (it duplicated Just Landed). Tiles use each body style's
+          newest showroom hero and a live count, so they maintain themselves. */}
       <motion.section
         initial={{ opacity: 0, y: 40 }}
         whileInView={{ opacity: 1, y: 0 }}
@@ -410,10 +428,10 @@ export default function Home() {
           <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 md:mb-16 gap-6">
             <div className="max-w-2xl w-full">
               <h2 className="text-2xl md:text-5xl font-display font-bold text-brand-primary tracking-tight mb-2 md:mb-4">
-                Popular Inventory
+                Shop by Style
               </h2>
               <p className="text-gray-500 text-base md:text-lg">
-                Premium vehicles ready for doorstep delivery across Atlantic Canada.
+                Know what you're after? Jump straight to it.
               </p>
             </div>
             <Button asChild variant="outline" className="hidden border-brand-accent text-brand-accent hover:bg-brand-accent hover:text-white font-bold md:flex text-base p-6 transition-colors rounded-xl">
@@ -423,62 +441,38 @@ export default function Home() {
             </Button>
           </div>
 
-          {loading ? (
-            <div className="py-20 flex flex-col items-center justify-center">
-              <Loader2 className="h-12 w-12 text-brand-primary animate-spin mb-4" />
-              <p className="text-gray-500 font-medium">Loading featured vehicles...</p>
-            </div>
-          ) : featuredCars.length > 0 ? (
-            <>
-              <div 
-                ref={carouselRef}
-                className="flex md:grid md:grid-cols-3 gap-4 md:gap-8 overflow-x-auto snap-x snap-mandatory [&::-webkit-scrollbar]:hidden pb-8 px-4 md:px-0"
-              >
-                {featuredCars.map((car, index) => (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 30 }}
-                    whileInView={{ opacity: 1, y: 0 }}
-                    viewport={{ once: true, margin: "-50px" }}
-                    transition={{ duration: 0.6, delay: index * 0.1, ease: "easeOut" }}
-                    key={car.id} 
-                    ref={(el) => { cardRefs.current[index] = el; }}
-                    data-index={index}
-                    className="w-[calc(100vw-56px)] md:w-full flex-shrink-0 snap-center px-1"
-                  >
-                    <CarCard car={car} />
-                  </motion.div>
-                ))}
-              </div>
-              <div className="flex flex-col items-center gap-6 md:hidden">
-                <div className="flex justify-center gap-2">
-                  {featuredCars.map((_, index) => (
-                    <div 
-                      key={index}
-                      className={cn(
-                        "h-2 rounded-full transition-all duration-300",
-                        index === activeSlide ? "w-6 bg-brand-primary" : "w-2 bg-gray-300"
-                      )}
-                    />
-                  ))}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-6">
+            {styleTiles.map((tile) => (
+              <Link key={tile.name} to={tile.path} className="group relative rounded-2xl md:rounded-3xl overflow-hidden aspect-[4/3] bg-gray-100 shadow-sm hover:shadow-xl transition-all duration-300">
+                {tile.image && (
+                  <img
+                    src={tile.image}
+                    alt={tile.name}
+                    className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                    loading="lazy"
+                    decoding="async"
+                    referrerPolicy="no-referrer"
+                  />
+                )}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+                <div className="absolute inset-x-0 bottom-0 p-3 md:p-5 flex items-end justify-between gap-2">
+                  <div>
+                    <p className="text-white font-display font-bold text-base md:text-2xl leading-tight">{tile.name}s</p>
+                    <p className="text-white/80 text-[11px] md:text-sm font-medium">{tile.count} available</p>
+                  </div>
+                  <span className="hidden md:inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm text-white group-hover:bg-brand-accent transition-colors">
+                    <ChevronRight className="h-5 w-5" />
+                  </span>
                 </div>
-                <Button asChild variant="outline" className="w-full mt-6 h-12 md:h-14 font-bold border-brand-primary/20 text-brand-primary hover:bg-brand-primary/5 hover:text-brand-primary transition-all">
-                  <Link to="/inventory" className="flex items-center justify-center">
-                    View Full Inventory
-                  </Link>
-                </Button>
-              </div>
-            </>
-          ) : (
-            <div className="py-20 text-center">
-              <p className="text-brand-primary text-xl font-bold mb-4 tracking-tight">Don't see what you're looking for?</p>
-              <p className="text-slate-600 text-lg mb-8 max-w-2xl mx-auto">
-                Our scouts have access to thousands of off-market vehicles across Atlantic Canada. Tell us your dream car, and we'll find it.
-              </p>
-              <Button asChild variant="brand" size="lg" className="rounded-xl">
-                <Link to="/apply-now">Get Pre-Approved</Link>
-              </Button>
-            </div>
-          )}
+              </Link>
+            ))}
+          </div>
+
+          <Button asChild variant="outline" className="w-full mt-6 h-12 font-bold border-brand-primary/20 text-brand-primary hover:bg-brand-primary/5 hover:text-brand-primary transition-all md:hidden">
+            <Link to="/inventory" className="flex items-center justify-center">
+              View Full Inventory
+            </Link>
+          </Button>
         </div>
       </motion.section>
 
@@ -638,7 +632,9 @@ export default function Home() {
             {/* Real, auto-synced 5-star reviews from Google + Facebook.
                 The widget shows its own live aggregate rating, so no static
                 stars header here (it would drift out of date). */}
-            <ElfsightReviews />
+            <div id="vac-reviews" className="scroll-mt-24">
+              <ElfsightReviews />
+            </div>
           </div>
         </div>
       </section>
@@ -652,14 +648,15 @@ export default function Home() {
       {/* How it Works - The 3-Step Process */}
       <section className="py-14 md:py-24 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12 md:mb-24">
-            <h2 className="text-4xl md:text-6xl font-display font-bold text-brand-primary mb-6">How It Works</h2>
-            <p className="text-gray-500 text-xl max-w-2xl mx-auto">
+          <div className="text-center mb-8 md:mb-24">
+            <h2 className="text-3xl md:text-6xl font-display font-bold text-brand-primary mb-4 md:mb-6">How It Works</h2>
+            <p className="text-gray-500 text-base md:text-xl max-w-2xl mx-auto">
               Shop first or Apply first. We've reimagined the car buying experience to be completely online and transparent.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-16 relative">
+          {/* Compact on phones — each step was filling most of a screen */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-16 relative">
             {steps.map((step, index) => (
               <motion.div
                 key={step.title}
@@ -669,21 +666,23 @@ export default function Home() {
                 transition={{ duration: 0.7, delay: index * 0.2, ease: "easeOut" }}
                 className="flex flex-col items-center text-center group"
               >
-                <div className="h-24 w-24 rounded-[2rem] bg-brand-primary text-white flex items-center justify-center mb-10 shadow-2xl shadow-brand-primary/20 group-hover:bg-[#7380FF] group-hover:rotate-6 transition-all duration-500">
-                  <step.icon className="h-10 w-10" />
+                <div className="h-16 w-16 md:h-24 md:w-24 rounded-2xl md:rounded-[2rem] bg-brand-primary text-white flex items-center justify-center mb-4 md:mb-10 shadow-2xl shadow-brand-primary/20 group-hover:bg-[#7380FF] group-hover:rotate-6 transition-all duration-500">
+                  <step.icon className="h-7 w-7 md:h-10 md:w-10" />
                 </div>
-                <div className="flex items-center justify-center mb-6">
+                <div className="flex items-center justify-center mb-3 md:mb-6">
                   <span className="text-xs font-bold text-[#7380FF] uppercase tracking-[0.2em] bg-[#7380FF]/5 px-5 py-2 rounded-full">Step 0{index + 1}</span>
                 </div>
-                <h3 className="text-2xl font-display font-bold text-brand-primary mb-5">{step.title}</h3>
-                <p className="text-lg text-gray-500 leading-relaxed max-w-sm">{step.description}</p>
+                <h3 className="text-xl md:text-2xl font-display font-bold text-brand-primary mb-2 md:mb-5">{step.title}</h3>
+                <p className="text-base md:text-lg text-gray-500 leading-relaxed max-w-sm">{step.description}</p>
               </motion.div>
             ))}
           </div>
 
-          <div className="mt-16 text-center">
-            <Button asChild size="lg" className="bg-[#7380FF] hover:bg-[#7380FF]/90 text-white px-12 py-8 text-xl font-bold rounded-xl">
-              <Link to="/apply-now">Get Pre-Approved</Link>
+          {/* Browse, not another Get Pre-Approved — the sticky mobile bar already
+              shows that CTA right below this spot (two identical buttons stacked). */}
+          <div className="mt-10 md:mt-16 text-center">
+            <Button asChild size="lg" variant="outline" className="border-[#7380FF] text-[#7380FF] hover:bg-[#7380FF] hover:text-white px-12 py-8 text-xl font-bold rounded-xl transition-colors">
+              <Link to="/inventory">Browse Inventory</Link>
             </Button>
           </div>
         </div>

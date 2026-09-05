@@ -31,8 +31,11 @@ const bodyStyles = [
 export default function Inventory() {
   const { inventory, loading, error } = useInventory();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [searchQuery, setSearchQuery] = useState(() => sessionStorage.getItem('inventory_searchQuery') || searchParams.get('q') || '');
-  const [selectedBody, setSelectedBody] = useState(() => sessionStorage.getItem('inventory_selectedBody') || searchParams.get('body') || 'all');
+  // URL params must WIN over sessionStorage: a link like /inventory?body=Truck
+  // (homepage Shop-by-Style tiles) has explicit intent; sessionStorage only
+  // restores state when the visitor arrives with no filters in the URL.
+  const [searchQuery, setSearchQuery] = useState(() => searchParams.get('q') || sessionStorage.getItem('inventory_searchQuery') || '');
+  const [selectedBody, setSelectedBody] = useState(() => searchParams.get('body') || sessionStorage.getItem('inventory_selectedBody') || 'all');
   const [selectedBudget, setSelectedBudget] = useState<string | null>(null);
   const [priceRange, setPriceRange] = useState<[number, number]>([6000, 100000]);
   const [maxDownPayment, setMaxDownPayment] = useState<number>(0);
