@@ -129,6 +129,23 @@ export default function Home() {
   const testimonialsCardRefs = React.useRef<(HTMLDivElement | null)[]>([]);
   const featuredCars = inventory.filter(car => car.isFeatured).slice(0, 3);
 
+  // Newest arrivals, auto-populated — the owner buys daily and the freshest cars
+  // are the draw. No admin flag needed: anything For Sale, newest createdAt first.
+  const justLanded = React.useMemo(() => {
+    const ts = (c: any) => {
+      try {
+        const d = c.createdAt?.toDate ? c.createdAt.toDate() : new Date(c.createdAt);
+        return isNaN(d.getTime()) ? 0 : d.getTime();
+      } catch (e) {
+        return 0;
+      }
+    };
+    return inventory
+      .filter(c => c.status !== 'Sold' && c.status !== 'Pending Sale')
+      .sort((a, b) => ts(b) - ts(a))
+      .slice(0, 8);
+  }, [inventory]);
+
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
@@ -278,8 +295,58 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Just Landed — auto-fed from the newest For Sale listings */}
+      {!loading && justLanded.length > 0 && (
+        <motion.section
+          initial={{ opacity: 0, y: 40 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.8, ease: "easeOut" }}
+          className="py-12 md:py-20 bg-[#F8FAFC]"
+        >
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
+              <div className="max-w-2xl w-full">
+                <div className="inline-flex items-center gap-2 bg-emerald-50 text-emerald-700 rounded-full px-3 py-1 text-xs font-black uppercase tracking-wider mb-3">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Just Landed
+                </div>
+                <h2 className="text-2xl md:text-5xl font-display font-bold text-brand-primary tracking-tight mb-2 md:mb-3">
+                  Fresh Off the Truck
+                </h2>
+                <p className="text-gray-500 text-base md:text-lg">
+                  New arrivals hit our showroom daily — these are the latest.
+                </p>
+              </div>
+              <Button asChild variant="outline" className="hidden border-brand-accent text-brand-accent hover:bg-brand-accent hover:text-white font-bold md:flex text-base p-6 transition-colors rounded-xl">
+                <Link to="/inventory">
+                  See All Arrivals <ChevronRight className="ml-2 h-5 w-5" />
+                </Link>
+              </Button>
+            </div>
+
+            <div className="flex gap-4 md:gap-6 overflow-x-auto snap-x snap-mandatory [&::-webkit-scrollbar]:hidden pb-4 -mx-4 px-4 sm:mx-0 sm:px-1">
+              {justLanded.map((car) => (
+                <div
+                  key={car.id}
+                  className="w-[calc(100vw-72px)] sm:w-[320px] md:w-[340px] flex-shrink-0 snap-center"
+                >
+                  <CarCard car={car} />
+                </div>
+              ))}
+            </div>
+
+            <Button asChild variant="outline" className="w-full mt-4 h-12 font-bold border-brand-primary/20 text-brand-primary hover:bg-brand-primary/5 hover:text-brand-primary transition-all md:hidden">
+              <Link to="/inventory" className="flex items-center justify-center">
+                See All Arrivals
+              </Link>
+            </Button>
+          </div>
+        </motion.section>
+      )}
+
       {/* Popular Inventory */}
-      <motion.section 
+      <motion.section
         initial={{ opacity: 0, y: 40 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true }}

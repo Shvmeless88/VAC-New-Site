@@ -55,8 +55,9 @@ export default React.memo(function CarCard({ car, hideSoldDate = false }: CarCar
       <Link to={getVehicleUrl(car)} className="block h-full">
         <Card className="overflow-hidden border border-[#E2E8F0] hover:shadow-2xl transition-all duration-300 ease-in-out group h-full flex flex-col rounded-xl bg-white">
           
-          {/* Image Section - 16:9 */}
-          <div className="relative aspect-video overflow-hidden bg-gray-100 flex justify-center items-center">
+          {/* Image Section - 4:3 to match the showroom hero framing (16:9 cropped
+              off the turntable base, which is the best part of the composite) */}
+          <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 flex justify-center items-center">
             {/* Main Image */}
             {/* Sirv resizes on the fly, so ask for the size we actually render.
                 The card is ~308px on a phone — shipping the 1920px original was
