@@ -1,4 +1,4 @@
-import { calculateBiWeeklyPayment, cn, getVehicleUrl } from '@/lib/utils';
+import { calculateBiWeeklyPayment, cn, getVehicleUrl, maxFinancingTerm } from '@/lib/utils';
 import { sirvResize, sirvSrcSet } from '@/lib/imageUrl';
 import * as React from 'react';
 import { Car } from '@/types';
@@ -14,8 +14,10 @@ interface CarCardProps {
 }
 
 export default React.memo(function CarCard({ car, hideSoldDate = false }: CarCardProps) {
-  // Calculate bi-weekly payment: 6.99% interest, 84 months
-  const biWeekly = calculateBiWeeklyPayment(Number(car.price), 6.99, 84);
+  // Bi-weekly payment at 6.99% over the LONGEST TERM this year/km combo actually
+  // qualifies for (lender rate sheets); null = not financeable, hide the payment.
+  const financeTerm = maxFinancingTerm(Number(car.year), Number(car.mileage));
+  const biWeekly = financeTerm ? calculateBiWeeklyPayment(Number(car.price), 6.99, financeTerm) : 0;
 
   const formatSoldDate = (soldAt: any) => {
     if (!soldAt) return '';
@@ -122,12 +124,16 @@ export default React.memo(function CarCard({ car, hideSoldDate = false }: CarCar
                 </div>
               ) : (
                 <>
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-xl font-black text-brand-primary tracking-tighter">
-                      ${Math.round(biWeekly).toLocaleString()}
-                    </span>
-                    <span className="text-xs font-bold text-[#64748B]">/bw</span>
-                  </div>
+                  {financeTerm ? (
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-xl font-black text-brand-primary tracking-tighter">
+                        ${Math.round(biWeekly).toLocaleString()}
+                      </span>
+                      <span className="text-xs font-bold text-[#64748B]">/bw</span>
+                    </div>
+                  ) : (
+                    <span className="text-xs font-bold text-[#64748B]">Contact us for financing</span>
+                  )}
                   <span className="text-sm font-bold text-[#64748B]">
                     ${(car.price || 0).toLocaleString()}
                   </span>

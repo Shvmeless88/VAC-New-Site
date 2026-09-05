@@ -16,7 +16,7 @@ import {
 import { Car } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { calculateBiWeeklyPayment, cn } from '@/lib/utils';
+import { calculateBiWeeklyPayment, cn, maxFinancingTerm } from '@/lib/utils';
 import { 
   ArrowLeft, 
   ChevronRight, 
@@ -930,7 +930,8 @@ export default function CarDetails() {
     );
   }
 
-  const biWeekly = calculateBiWeeklyPayment(Number(car.price), 6.99, 84);
+  const financeTerm = maxFinancingTerm(Number(car.year), Number(car.mileage));
+  const biWeekly = financeTerm ? calculateBiWeeklyPayment(Number(car.price), 6.99, financeTerm) : 0;
 
   const formatSoldDate = (soldAt: any) => {
     if (!soldAt) return '';
@@ -1034,12 +1035,16 @@ export default function CarDetails() {
             </div>
           ) : (
             <div className="flex flex-col gap-1 border-b border-gray-100 pb-4">
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-4xl font-black text-slate-900 tracking-tight">
-                  ${Math.round(biWeekly).toLocaleString()}
-                </span>
-                <span className="text-lg font-bold text-slate-400">/bi-weekly</span>
-              </div>
+              {financeTerm ? (
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-4xl font-black text-slate-900 tracking-tight">
+                    ${Math.round(biWeekly).toLocaleString()}
+                  </span>
+                  <span className="text-lg font-bold text-slate-400">/bi-weekly</span>
+                </div>
+              ) : (
+                <span className="text-lg font-bold text-slate-500">Contact us for financing options</span>
+              )}
               <div className="flex items-center gap-1.5">
                 <span className="text-sm text-slate-500 font-bold">
                   Cash Price: ${(car.price || 0).toLocaleString()}
@@ -1055,7 +1060,7 @@ export default function CarDetails() {
             </div>
           </div>
           
-          <p className="text-xs text-gray-400 italic">Estimated at 6.99% over 84 months O.A.C.</p>
+          <p className="text-xs text-gray-400 italic">{financeTerm ? `Estimated at 6.99% over ${financeTerm} months O.A.C.` : 'Financing terms vary for this vehicle — contact us.'}</p>
         </div>
       </div>
     </div>
@@ -1686,7 +1691,7 @@ export default function CarDetails() {
                 <div className="flex-1 text-center">
                   <span className="block text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">Bi-Weekly</span>
                   <div className="flex justify-center items-baseline gap-0.5">
-                    <span className="text-lg font-bold text-slate-900">${Math.round(biWeekly).toLocaleString()}</span>
+                    <span className="text-lg font-bold text-slate-900">{financeTerm ? `$${Math.round(biWeekly).toLocaleString()}` : '—'}</span>
                     <span className="text-[10px] uppercase font-bold text-slate-400">/bw</span>
                   </div>
                 </div>

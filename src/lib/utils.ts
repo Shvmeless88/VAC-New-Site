@@ -61,3 +61,36 @@ export function calculateBiWeeklyPayment(price: number, interestRate: number, te
   
   return (monthlyPayment * 12) / 26;
 }
+
+// ---- Financing term eligibility (lender rate sheets, updated Sep 2026) ----
+// Max amortization is set by MODEL YEAR + KILOMETRES (Eden Park booking guide,
+// cross-checked against TD Auto Finance and iA Auto Finance matrices). Nothing
+// above 180,000 km, and nothing older than 2016, is financeable at all.
+// Bands are [maxKm, termMonths] pairs; the first band the car's km fits wins.
+const TERM_BANDS: Record<number, [number, number][]> = {
+  2027: [[180000, 84]],
+  2026: [[180000, 84]],
+  2025: [[68000, 84], [100000, 84], [130000, 84], [180000, 72]],
+  2024: [[78000, 84], [125000, 84], [150000, 78], [180000, 66]],
+  2023: [[85000, 84], [125000, 84], [150000, 78], [180000, 66]],
+  2022: [[95000, 84], [130000, 84], [160000, 72], [180000, 66]],
+  2021: [[95000, 84], [120000, 84], [170000, 72], [180000, 66]],
+  2020: [[110000, 78], [135000, 72], [170000, 60], [180000, 54]],
+  2019: [[110000, 72], [130000, 66], [170000, 54], [180000, 48]],
+  2018: [[145000, 48], [165000, 48], [180000, 36]],
+  2017: [[145000, 48], [165000, 42], [180000, 24]],
+  2016: [[145000, 36], [165000, 36], [180000, 12]],
+};
+
+/** Longest financing term (months) a vehicle qualifies for, or null if it
+ *  can't be financed (year < 2016 or over 180,000 km). */
+export function maxFinancingTerm(year?: number | null, km?: number | null): number | null {
+  const y = Number(year), k = Number(km);
+  if (!y || y < 2016) return null;
+  const bands = TERM_BANDS[Math.min(y, 2027)];
+  if (!bands) return null;
+  if (!k || k <= 0) return bands[0][1];       // unknown km — assume best band
+  if (k > 180000) return null;
+  for (const [maxKm, term] of bands) if (k <= maxKm) return term;
+  return null;
+}
