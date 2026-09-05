@@ -1,7 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
+import { calculateBiWeeklyPayment, cn, getVehicleUrl, maxFinancingTerm } from '@/lib/utils';
 import { useInventory } from '@/hooks/useInventory';
 import { useSoldStories } from '@/hooks/useSoldStories';
 import CarCard from '@/components/inventory/CarCard';
@@ -146,6 +146,15 @@ export default function Home() {
       .slice(0, 8);
   }, [inventory]);
 
+  // Hero spotlight: the newest arrival WITH a showroom hero image. The old
+  // stock press photo (heroImageUrl) stays as fallback until inventory loads.
+  const heroCar = justLanded.find(c => c.images?.[0]) || null;
+  const heroCarPrice = heroCar ? Number(heroCar.price) : 0;
+  const heroCarTerm = heroCar && heroCarPrice > 0
+    ? maxFinancingTerm(Number(heroCar.year), Number(heroCar.mileage))
+    : null;
+  const heroCarBiWeekly = heroCarTerm ? calculateBiWeeklyPayment(heroCarPrice, 6.99, heroCarTerm) : 0;
+
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
@@ -259,39 +268,80 @@ export default function Home() {
             </div>
           </motion.div>
         </div>
-        {/* Right Column - Image with Grounding Shadow */}
-        <div className="flex-1 relative flex items-center justify-end p-0 overflow-visible">
-          <div className="relative w-full flex justify-end overflow-visible">
+        {/* Right Column - Newest arrival spotlight (real inventory, clickable).
+            Falls back to the old stock press photo until inventory loads. */}
+        <div className="flex-1 relative flex items-center justify-center lg:justify-end p-6 md:p-10 lg:pr-16">
+          {heroCar ? (
             <motion.div
-              initial={{ opacity: 0, scale: 0.9, x: 20 }}
-              animate={{ opacity: heroImageUrl ? 1 : 0, scale: heroImageUrl ? 1 : 0.9, x: heroImageUrl ? 0 : 20 }}
-              transition={{ duration: 1, delay: 0.2 }}
-              className="relative z-10 w-full max-w-4xl overflow-visible"
+              initial={{ opacity: 0, scale: 0.95, x: 20 }}
+              animate={{ opacity: 1, scale: 1, x: 0 }}
+              transition={{ duration: 0.8, delay: 0.2 }}
+              className="relative z-10 w-full max-w-2xl"
             >
-              {heroImageUrl && (
-                <img
-                  src={heroImageUrl}
-                  alt="VAC Featured Vehicle"
-                  className="w-full h-auto object-contain [mask-image:linear-gradient(to_bottom,black_85%,transparent_100%)]"
-                  referrerPolicy="no-referrer"
-                />
-              )}
+              <Link to={getVehicleUrl(heroCar)} className="block group">
+                <div className="relative overflow-hidden rounded-[2rem] shadow-2xl shadow-brand-primary/20 ring-1 ring-black/5">
+                  <img
+                    src={heroCar.images[0]}
+                    alt={`${heroCar.year} ${heroCar.make} ${heroCar.model}`}
+                    width={1184}
+                    height={864}
+                    fetchPriority="high"
+                    className="w-full h-auto object-cover group-hover:scale-[1.02] transition-transform duration-700"
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="absolute top-4 left-4 inline-flex items-center gap-2 bg-emerald-500 text-white rounded-full px-3 py-1.5 text-xs font-black uppercase tracking-wider shadow-lg">
+                    <span className="h-2 w-2 rounded-full bg-white animate-pulse" />
+                    Just Landed
+                  </div>
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent px-5 pt-10 pb-4 flex items-end justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-white font-display font-bold text-lg md:text-xl leading-tight truncate">
+                        {heroCar.year} {heroCar.make} {heroCar.model}
+                      </p>
+                      <p className="text-white/80 text-xs md:text-sm font-medium truncate">
+                        {(heroCar.mileage || 0).toLocaleString()} km
+                        {heroCarPrice > 0 && <> · ${heroCarPrice.toLocaleString()}</>}
+                        {heroCarTerm ? <> · ${Math.round(heroCarBiWeekly).toLocaleString()}/bw</> : null}
+                      </p>
+                    </div>
+                    <span className="hidden sm:inline-flex items-center gap-1 text-white text-xs font-bold bg-white/15 backdrop-blur-sm rounded-full px-3 py-1.5 whitespace-nowrap group-hover:bg-brand-accent transition-colors">
+                      View Vehicle <ArrowRight className="h-3.5 w-3.5" />
+                    </span>
+                  </div>
+                </div>
+              </Link>
             </motion.div>
-            {/* Grounding Shadow Ellipse */}
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: heroImageUrl ? 1 : 0, scale: heroImageUrl ? 1 : 0.8 }}
-              transition={{ duration: 1, delay: 0.4 }}
-              className="absolute bottom-[12%] right-0 w-[85%] h-[8%] bg-gray-900/20 blur-3xl rounded-[100%] z-0"
-            />
-            {/* Tight Contact Shadow */}
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: heroImageUrl ? 1 : 0, scale: heroImageUrl ? 1 : 0.8 }}
-              transition={{ duration: 1, delay: 0.4 }}
-              className="absolute bottom-[14%] right-[5%] w-[75%] h-[2%] bg-gray-900/40 blur-xl rounded-[100%] z-0"
-            />
-          </div>
+          ) : (
+            <div className="relative w-full flex justify-end overflow-visible">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, x: 20 }}
+                animate={{ opacity: heroImageUrl ? 1 : 0, scale: heroImageUrl ? 1 : 0.9, x: heroImageUrl ? 0 : 20 }}
+                transition={{ duration: 1, delay: 0.2 }}
+                className="relative z-10 w-full max-w-4xl overflow-visible"
+              >
+                {heroImageUrl && (
+                  <img
+                    src={heroImageUrl}
+                    alt="VAC Featured Vehicle"
+                    className="w-full h-auto object-contain [mask-image:linear-gradient(to_bottom,black_85%,transparent_100%)]"
+                    referrerPolicy="no-referrer"
+                  />
+                )}
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: heroImageUrl ? 1 : 0, scale: heroImageUrl ? 1 : 0.8 }}
+                transition={{ duration: 1, delay: 0.4 }}
+                className="absolute bottom-[12%] right-0 w-[85%] h-[8%] bg-gray-900/20 blur-3xl rounded-[100%] z-0"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: heroImageUrl ? 1 : 0, scale: heroImageUrl ? 1 : 0.8 }}
+                transition={{ duration: 1, delay: 0.4 }}
+                className="absolute bottom-[14%] right-[5%] w-[75%] h-[2%] bg-gray-900/40 blur-xl rounded-[100%] z-0"
+              />
+            </div>
+          )}
         </div>
       </section>
 
@@ -326,7 +376,8 @@ export default function Home() {
             </div>
 
             <div className="flex gap-4 md:gap-6 overflow-x-auto snap-x snap-mandatory [&::-webkit-scrollbar]:hidden pb-4 -mx-4 px-4 sm:mx-0 sm:px-1">
-              {justLanded.map((car) => (
+              {/* The hero spotlight car already headlines the page — skip it here */}
+              {justLanded.filter(car => car.id !== heroCar?.id).map((car) => (
                 <div
                   key={car.id}
                   className="w-[calc(100vw-72px)] sm:w-[320px] md:w-[340px] flex-shrink-0 snap-center"
