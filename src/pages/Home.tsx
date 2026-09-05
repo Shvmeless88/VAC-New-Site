@@ -480,12 +480,10 @@ export default function Home() {
 
       {/* Trust Bar - Premium Checklist Bridge */}
       <section className="py-8 md:py-16 bg-white relative z-10">
-        <div className="max-w-[95%] lg:max-w-7xl mx-auto relative overflow-hidden rounded-[2rem] lg:rounded-[3rem] bg-brand-primary shadow-2xl py-8 md:py-16 px-4 md:px-6 scale-[0.98] transform-gpu hover:scale-100 transition-transform duration-700">
-          {/* Abstract Glow Effects */}
-          <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-brand-secondary/20 blur-[130px] rounded-full pointer-events-none translate-x-1/2 -translate-y-1/2" />
-          <div className="absolute bottom-0 left-0 w-[600px] h-[600px] bg-brand-secondary/10 blur-[150px] rounded-full pointer-events-none -translate-x-1/3 translate-y-1/3" />
-          <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px]" />
-          <div className="absolute left-0 right-0 top-0 -z-10 m-auto h-[310px] w-[310px] rounded-full bg-brand-secondary opacity-20 blur-[100px]" />
+        {/* Clean dark card — the old grid-line texture / stacked glows / hover-scale
+            read as busy and dated. One soft glow, nothing else. */}
+        <div className="max-w-[95%] lg:max-w-7xl mx-auto relative overflow-hidden rounded-[2rem] lg:rounded-[3rem] bg-brand-primary shadow-xl py-8 md:py-14 px-4 md:px-6">
+          <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-brand-secondary/15 blur-[130px] rounded-full pointer-events-none translate-x-1/2 -translate-y-1/2" />
 
           <div className="max-w-6xl mx-auto relative z-10">
             <div className="grid grid-cols-3 gap-2 md:gap-8 divide-x divide-white/5">
@@ -496,12 +494,10 @@ export default function Home() {
                 { Icon: MapPin, value: '8+ Years', label: 'Serving Atlantic Canada' },
                 { Icon: CreditCard, value: '15+', label: 'Lending Partners' },
               ].map(({ Icon, value, label }) => (
-                <div key={label} className="flex flex-col items-center text-center px-2 md:px-4 group">
-                  <div className="h-10 w-10 md:h-12 md:w-12 mb-3 md:mb-6 rounded-[0.8rem] md:rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center group-hover:scale-110 group-hover:bg-brand-secondary/20 group-hover:border-brand-secondary/30 transition-all duration-500 shadow-2xl shadow-brand-secondary/10 backdrop-blur-sm">
-                    <Icon className="h-5 w-5 md:h-6 md:w-6 text-brand-secondary group-hover:drop-shadow-[0_0_15px_rgba(115,128,255,0.5)] transition-all" />
-                  </div>
-                  <p className="font-display font-bold text-white text-[13px] md:text-xl lg:text-3xl mb-1 md:mb-3 tracking-tight leading-none">{value}</p>
-                  <p className="text-[8px] md:text-xs text-brand-secondary/80 font-bold uppercase tracking-[0.1em] md:tracking-[0.25em] max-w-[200px] leading-relaxed">{label}</p>
+                <div key={label} className="flex flex-col items-center text-center px-2 md:px-4">
+                  <Icon className="h-5 w-5 md:h-7 md:w-7 text-brand-secondary mb-3 md:mb-5" />
+                  <p className="font-display font-bold text-white text-lg md:text-2xl lg:text-4xl mb-1 md:mb-2 tracking-tight leading-none">{value}</p>
+                  <p className="text-[9px] md:text-xs text-white/60 font-bold uppercase tracking-[0.1em] md:tracking-[0.2em] max-w-[200px] leading-relaxed">{label}</p>
                 </div>
               ))}
             </div>

@@ -29,8 +29,8 @@ export default function VehicleScoutCard({ index }: VehicleScoutCardProps) {
     },
     {
       icon: Package,
-      headline: "50+ Fresh Arrivals Weekly",
-      body: "Our inventory turns over fast. We add certified vehicles to our lot every week.",
+      headline: "Fresh Arrivals Daily",
+      body: "Our inventory turns over fast. We add certified vehicles to our lot every day.",
       buttonText: "",
       showButton: false
     },
