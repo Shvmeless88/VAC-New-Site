@@ -130,15 +130,17 @@ export default function Home() {
   const testimonialsCardRefs = React.useRef<(HTMLDivElement | null)[]>([]);
   const featuredCars = inventory.filter(car => car.isFeatured).slice(0, 3);
 
-  // Shop-by-Style tiles: live count per body style + the newest hero image for
-  // that style as the tile background. Styles with no stock are hidden.
+  // Shop-by-Style tiles: newest hero image per body style as the tile background.
+  // Owner's call (Sep 2026): only the three main styles, no availability counts.
   const styleTiles = React.useMemo(() => {
-    return bodyStyles.map(s => {
-      const cars = inventory.filter(c =>
-        c.bodyStyle === s.name && c.status !== 'Sold' && c.status !== 'Pending Sale');
-      const withImg = cars.find(c => c.images?.[0]);
-      return { ...s, count: cars.length, image: withImg?.images?.[0] };
-    }).filter(t => t.count > 0);
+    return bodyStyles
+      .filter(s => ['SUV', 'Sedan', 'Truck'].includes(s.name))
+      .map(s => {
+        const cars = inventory.filter(c =>
+          c.bodyStyle === s.name && c.status !== 'Sold' && c.status !== 'Pending Sale');
+        const withImg = cars.find(c => c.images?.[0]);
+        return { ...s, count: cars.length, image: withImg?.images?.[0] };
+      }).filter(t => t.count > 0);
   }, [inventory]);
 
   // Newest arrivals, auto-populated — the owner buys daily and the freshest cars
@@ -443,7 +445,7 @@ export default function Home() {
 
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-6">
             {styleTiles.map((tile) => (
-              <Link key={tile.name} to={tile.path} className="group relative rounded-2xl md:rounded-3xl overflow-hidden aspect-[4/3] bg-gray-100 shadow-sm hover:shadow-xl transition-all duration-300">
+              <Link key={tile.name} to={tile.path} className="group relative rounded-2xl md:rounded-3xl overflow-hidden aspect-[4/3] bg-gray-100 shadow-sm hover:shadow-xl transition-all duration-300 last:col-span-2 md:last:col-span-1">
                 {tile.image && (
                   <img
                     src={tile.image}
@@ -456,10 +458,7 @@ export default function Home() {
                 )}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
                 <div className="absolute inset-x-0 bottom-0 p-3 md:p-5 flex items-end justify-between gap-2">
-                  <div>
-                    <p className="text-white font-display font-bold text-base md:text-2xl leading-tight">{tile.name}s</p>
-                    <p className="text-white/80 text-[11px] md:text-sm font-medium">{tile.count} available</p>
-                  </div>
+                  <p className="text-white font-display font-bold text-base md:text-2xl leading-tight">{tile.name}s</p>
                   <span className="hidden md:inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm text-white group-hover:bg-brand-accent transition-colors">
                     <ChevronRight className="h-5 w-5" />
                   </span>
