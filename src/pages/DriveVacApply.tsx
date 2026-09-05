@@ -904,7 +904,11 @@ export default function DriveVacApply({ mode = 'leadgen' }: { mode?: 'leadgen' |
               <div className="grid grid-cols-3 gap-3">
                 {[
                   { Icon: Zap, title: 'Apply', sub: 'In about 2 minutes' },
-                  { Icon: Users, title: 'Get matched', sub: 'With a local dealer' },
+                  // Step 2 differs by funnel: VAC's own applications are approved by
+                  // VAC's finance team; only the lead-gen funnel matches to a dealer.
+                  isDealership
+                    ? { Icon: Users, title: 'Get approved', sub: 'With 15+ lending partners' }
+                    : { Icon: Users, title: 'Get matched', sub: 'With a local dealer' },
                   { Icon: Home, title: 'Delivered', sub: 'Right to your door' },
                 ].map(({ Icon, title, sub }) => (
                   <div key={title} className="flex flex-col items-center text-center">
