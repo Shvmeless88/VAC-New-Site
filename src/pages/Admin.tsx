@@ -112,6 +112,59 @@ const FEATURE_CATEGORIES = [
   }
 ];
 
+// Click-to-edit cell for the All Listings table — stock # and price change often
+// enough that a full edit-drawer round trip per car was slowing the owner down.
+// Enter/blur saves, Esc cancels; `parse` maps the raw input to the stored value.
+function InlineEditCell({ value, display, placeholder, parse, onSave, disabled, inputClass }: {
+  value: string;
+  display: React.ReactNode;
+  placeholder: string;
+  parse: (raw: string) => string | number;
+  onSave: (parsed: string | number) => Promise<void>;
+  disabled?: boolean;
+  inputClass?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+  const commit = async () => {
+    const parsed = parse(draft);
+    setEditing(false);
+    if (String(parsed) === String(parse(value))) return;
+    setSaving(true);
+    try { await onSave(parsed); } finally { setSaving(false); }
+  };
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => { setDraft(value); setEditing(true); }}
+        title={disabled ? undefined : 'Click to edit'}
+        className={`group/inline text-left rounded-lg -mx-2 px-2 py-1 transition-colors ${disabled ? 'cursor-default' : 'hover:bg-brand-accent/5 cursor-text'} ${saving ? 'opacity-50' : ''}`}
+      >
+        {display}
+        {!disabled && <Edit2 className="inline-block h-3 w-3 ml-1.5 text-gray-300 opacity-0 group-hover/inline:opacity-100 transition-opacity align-baseline" />}
+      </button>
+    );
+  }
+  return (
+    <input
+      autoFocus
+      defaultValue={value}
+      placeholder={placeholder}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={(e) => e.target.select()}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        if (e.key === 'Escape') { setDraft(value); setEditing(false); }
+      }}
+      className={`h-10 w-28 rounded-xl border border-brand-accent/40 bg-white px-2 text-sm font-bold text-brand-primary focus:outline-none focus:ring-2 focus:ring-brand-accent/30 ${inputClass || ''}`}
+    />
+  );
+}
+
 export default function Admin() {
   const { user, isAdmin, role, realRole, setSimulatedRole, loading: authLoading } = useAdmin();
   const { inventory, loading: inventoryLoading } = useInventory();
@@ -3092,13 +3145,38 @@ export default function Admin() {
                           </div>
                         </td>
                         <td className="px-8 py-6">
-                          <div className="flex flex-col">
-                            <span className="font-bold text-brand-primary font-mono">{car.stockNumber || 'NO STOCK #'}</span>
+                          <div className="flex flex-col items-start">
+                            <InlineEditCell
+                              value={car.stockNumber || ''}
+                              display={<span className={`font-bold font-mono ${car.stockNumber ? 'text-brand-primary' : 'text-gray-300'}`}>{car.stockNumber || 'NO STOCK #'}</span>}
+                              placeholder="Stock #"
+                              parse={(raw) => raw.trim().toUpperCase()}
+                              disabled={role !== 'super_admin' && role !== 'general_manager'}
+                              inputClass="font-mono uppercase"
+                              onSave={async (stock) => {
+                                await updateDoc(doc(db, 'inventory', car.id), {
+                                  stockNumber: stock || deleteField(),
+                                  updatedAt: Timestamp.now()
+                                });
+                              }}
+                            />
                             <span className="text-[10px] text-gray-400 font-mono uppercase truncate max-w-[120px]" title={car.vin}>{car.vin || 'N/A'}</span>
                           </div>
                         </td>
                         <td className="px-8 py-6">
-                          <span className="font-bold text-brand-primary text-lg">${(car.price || 0).toLocaleString()}</span>
+                          <InlineEditCell
+                            value={String(car.price || '')}
+                            display={<span className="font-bold text-brand-primary text-lg">{Number(car.price) > 0 ? `$${Number(car.price).toLocaleString()}` : 'Call for Price'}</span>}
+                            placeholder="Price"
+                            parse={(raw) => Number(String(raw).replace(/[^\d.]/g, '')) || 0}
+                            disabled={role !== 'super_admin' && role !== 'general_manager'}
+                            onSave={async (price) => {
+                              await updateDoc(doc(db, 'inventory', car.id), {
+                                price,
+                                updatedAt: Timestamp.now()
+                              });
+                            }}
+                          />
                         </td>
                         <td className="px-8 py-6">
                           <Select 
