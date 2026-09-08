@@ -29,7 +29,10 @@ export default function ElfsightReviews() {
     }
   }, [load]);
   return (
-    <div ref={holder} className="min-h-[400px]">
+    // overflow-x-clip: Elfsight's owner toolbar (rendered when the widget owner is
+    // logged in) is wider than a phone viewport and stretched the whole page
+    // sideways — clip anything the widget pushes past our container.
+    <div ref={holder} className="min-h-[400px] overflow-x-clip">
       {load && <div className="elfsight-app-9db6caed-1e35-4f55-9a80-5843a9e10e19" data-elfsight-app-lazy />}
     </div>
   );

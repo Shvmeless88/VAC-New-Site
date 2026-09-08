@@ -235,7 +235,8 @@ export default function Home() {
       {/* Hero Section - Professional, Financing First */}
       <section className="lg:min-h-[80vh] flex flex-col lg:flex-row bg-white relative overflow-hidden">
         {/* Left Column - Text and CTA */}
-        <div className="flex-1 flex items-center justify-center pt-8 pb-6 lg:py-24 px-6 md:px-16 lg:px-24 z-10">
+        {/* Tight on phones so the vehicle spotlight peeks above the fold */}
+        <div className="flex-1 flex items-center justify-center pt-6 pb-4 lg:py-24 px-6 md:px-16 lg:px-24 z-10">
           <motion.div
             initial={{ opacity: 0, x: -30 }}
             animate={{ opacity: 1, x: 0 }}
@@ -246,15 +247,15 @@ export default function Home() {
               <CheckCircle className="h-4 w-4 text-brand-accent" />
               <span className="text-xs font-bold text-brand-accent uppercase tracking-wider">Instant Decision • Rates from 6.99% O.A.C.</span>
             </div>
-            <h1 className="text-4xl md:text-5xl lg:text-7xl font-display font-black text-brand-primary leading-[1.05] mb-4 md:mb-8 tracking-tighter">
+            <h1 className="text-[34px] md:text-5xl lg:text-7xl font-display font-black text-brand-primary leading-[1.05] mb-3 md:mb-8 tracking-tighter">
               Get approved in minutes. <span className="text-brand-secondary">Delivered to your door.</span>
             </h1>
-            <div className="mb-6 md:mb-8">
+            <div className="mb-5 md:mb-8">
               <p className="text-slate-600 text-base md:text-lg max-w-2xl leading-relaxed">
                 Apply in about 60 seconds — <span className="font-bold text-slate-800">no obligation, rates from 6.99% O.A.C.</span> We work with every credit situation, right across Atlantic Canada.
               </p>
             </div>
-            <div className="flex flex-col gap-3 mb-6">
+            <div className="flex flex-col gap-3 mb-4 md:mb-6">
               <Button asChild variant="brand" size="xl" className="w-full">
                 <Link to="/apply-now">Get Pre-Approved</Link>
               </Button>
@@ -269,16 +270,16 @@ export default function Home() {
             <button
               type="button"
               onClick={() => document.getElementById('vac-reviews')?.scrollIntoView({ behavior: 'smooth' })}
-              className="flex items-center gap-2 mb-6 text-sm text-slate-500 hover:text-slate-700 transition-colors"
+              className="flex flex-wrap items-center justify-start gap-x-2 gap-y-0.5 mb-4 md:mb-6 text-sm text-slate-500 hover:text-slate-700 transition-colors text-left leading-snug"
             >
               <span className="text-amber-400 tracking-wide text-base">★★★★<span className="text-slate-300">★</span></span>
               <span className="font-bold text-brand-primary">4.4</span>
-              <span className="underline underline-offset-4 decoration-slate-300">from 650+ reviews on Google & Facebook</span>
+              <span className="underline underline-offset-4 decoration-slate-300">650+ Google & Facebook reviews</span>
             </button>
 
             {/* Trust chips — no repeats of the rate/no-obligation lines already in
                 the badge and paragraph a few lines up */}
-            <div className="flex flex-wrap gap-2 mb-4 md:mb-12">
+            <div className="flex flex-wrap gap-2 mb-2 md:mb-12">
               {['Every credit situation', '150-point inspected', 'VAC warranty included'].map((t) => (
                 <span key={t} className="inline-flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 border border-slate-100 px-3 py-1.5 rounded-lg">
                   <CheckCircle className="h-3.5 w-3.5 text-green-500" />
