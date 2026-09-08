@@ -523,13 +523,14 @@ export default function Home() {
             </Button>
           </div>
 
-          {/* Desktop Slider */}
-          <div className="hidden md:block overflow-hidden whitespace-nowrap relative py-8 -mx-4 px-4 md:mx-0 md:px-0 [mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)]">
-            <div className="flex gap-4 md:gap-8 min-w-max w-fit px-4 animate-scroll-carousel will-change-transform [backface-visibility:hidden]">
-              {[...deliveries.slice(0, 6), ...deliveries.slice(0, 6)].map((story, index) => (
+          {/* One swipeable snap row on every screen size — same interaction as the
+              "Fresh On the Lot" row (replaced the desktop auto-marquee + the
+              single-card mobile view 2026-09-08). */}
+          <div className="flex gap-4 md:gap-8 overflow-x-auto snap-x snap-mandatory [&::-webkit-scrollbar]:hidden pb-4 -mx-4 px-4 sm:mx-0 sm:px-1">
+              {deliveries.slice(0, 6).map((story) => (
                 <div
-                  key={`${story.id}-${index}`}
-                  className="w-[300px] md:w-[400px] flex-shrink-0 group bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500 border border-gray-100 px-0 whitespace-normal text-left"
+                  key={story.id}
+                  className="w-[calc(100vw-72px)] sm:w-[340px] md:w-[400px] snap-center group bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-2xl transition-all duration-500 border border-gray-100 px-0 flex-shrink-0 text-left"
                 >
                   <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-t-xl">
                     <img 
@@ -569,58 +570,13 @@ export default function Home() {
                   </div>
                 </div>
               ))}
-            </div>
           </div>
 
-          {/* Mobile Single Card View */}
-          <div className="block md:hidden">
-            {deliveries.length > 0 && (
-              <div className="max-w-sm mx-auto bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 mb-6">
-                <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-t-xl">
-                  <img 
-                    src={deliveries[0].photoUrl}
-                    alt={`Congrats, ${deliveries[0].firstName}!`}
-                    className="h-full w-full object-cover"
-                    referrerPolicy="no-referrer"
-                    loading="lazy"
-                  />
-                </div>
-                <div className="p-6">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Badge className="bg-[#41456B] text-white border-none px-2 py-0.5 font-semibold shadow-none text-xs uppercase tracking-wider rounded-sm flex items-center">
-                      <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse mr-1.5" />
-                      Live Delivery
-                    </Badge>
-                  </div>
-                  <div className="flex items-start justify-between mb-4">
-                    <h3 className="text-xl font-bold tracking-tight text-brand-primary truncate">Congrats, {deliveries[0].firstName}!</h3>
-                    <span className="text-sm font-medium text-[#64748B] whitespace-nowrap ml-2">
-                      {deliveries[0].createdAt?.toDate().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
-                    </span>
-                  </div>
-                  <div className="space-y-2 mb-6">
-                    <p className="text-[#64748B] text-base font-medium flex items-center gap-2.5 truncate">
-                      <CarIcon className="h-5 w-5 text-[#7380FF] shrink-0" /> {deliveries[0].vehicle}
-                    </p>
-                    <p className="text-[#64748B] text-base font-medium flex items-center gap-2.5 truncate">
-                      <MapPin className="h-5 w-5 text-[#7380FF] shrink-0" /> {deliveries[0].city}, {deliveries[0].province}
-                    </p>
-                  </div>
-                  <div className="flex gap-3">
-                    <Badge className="bg-[#7380FF]/5 text-[#7380FF] border-none px-2 py-0.5 font-bold text-xs uppercase tracking-wider rounded-lg">
-                      360° VERIFIED
-                    </Badge>
-                  </div>
-                </div>
-              </div>
-            )}
-            
-            <Button asChild variant="outline" className="w-full mt-6 h-12 md:h-14 font-bold border-brand-primary/20 text-brand-primary hover:bg-brand-primary/5 hover:text-brand-primary transition-all">
-              <Link to="/family" className="flex items-center justify-center">
-                View 100+ More Happy Customers
-              </Link>
-            </Button>
-          </div>
+          <Button asChild variant="outline" className="w-full mt-2 h-12 font-bold border-brand-primary/20 text-brand-primary hover:bg-brand-primary/5 hover:text-brand-primary transition-all md:hidden">
+            <Link to="/family" className="flex items-center justify-center">
+              View 100+ More Happy Customers
+            </Link>
+          </Button>
 
           {/* Reviews — folded in from the old standalone "Customer Experiences" section */}
           <div className="mt-14 md:mt-24 pt-14 md:pt-24 border-t border-gray-100">
