@@ -5821,6 +5821,7 @@ async function startServer() {
       <g:title><![CDATA[${title}]]></g:title>
       <g:description><![CDATA[${(car.description || title).substring(0, 5000)}]]></g:description>
       <g:link>${link}</g:link>
+      <g:link_template>${link}?store={store_code}</g:link_template>
       <g:image_link>${xmlUrl(car.images?.[0] || "")}</g:image_link>${extraImgs}
       <g:condition>used</g:condition>
       <g:availability>in_stock</g:availability>
