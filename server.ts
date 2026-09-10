@@ -5794,6 +5794,8 @@ async function startServer() {
       const snap = await db.collection("inventory").get();
       const baseUrl = getFeedBaseUrl(req);
       const storeCode = String(req.query.store || "VAC-HALIFAX");
+      // Firebase Storage URLs carry raw "&" (…?alt=media&token=…) which breaks XML
+      const xmlUrl = (u: string) => String(u || "").replace(/&/g, "&amp;");
       let xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss xmlns:g="http://base.google.com/ns/1.0" version="2.0">
   <channel>
@@ -5809,7 +5811,7 @@ async function startServer() {
         const link = slug ? `${baseUrl}/inventory/${slug}-${id}` : `${baseUrl}/inventory/${id}`;
         let extraImgs = "";
         (Array.isArray(car.images) ? car.images.slice(1, 10) : []).forEach((img: string) => {
-          if (img) extraImgs += `\n      <g:additional_image_link>${img}</g:additional_image_link>`;
+          if (img) extraImgs += `\n      <g:additional_image_link>${xmlUrl(img)}</g:additional_image_link>`;
         });
         xml += `
     <item>
@@ -5819,7 +5821,7 @@ async function startServer() {
       <g:title><![CDATA[${title}]]></g:title>
       <g:description><![CDATA[${(car.description || title).substring(0, 5000)}]]></g:description>
       <g:link>${link}</g:link>
-      <g:image_link>${car.images?.[0] || ""}</g:image_link>${extraImgs}
+      <g:image_link>${xmlUrl(car.images?.[0] || "")}</g:image_link>${extraImgs}
       <g:condition>used</g:condition>
       <g:availability>in_stock</g:availability>
       <g:price>${car.price} CAD</g:price>
