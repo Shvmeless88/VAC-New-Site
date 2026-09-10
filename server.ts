@@ -5793,7 +5793,7 @@ async function startServer() {
       const { db } = await getFirestoreAdmin();
       const snap = await db.collection("inventory").get();
       const baseUrl = getFeedBaseUrl(req);
-      const storeCode = String(req.query.store || "VAC-HALIFAX");
+      const storeCode = String(req.query.store || "VAC01");  // GBP shop code (Business Profile Manager)
       // Firebase Storage URLs carry raw "&" (…?alt=media&token=…) which breaks XML
       const xmlUrl = (u: string) => String(u || "").replace(/&/g, "&amp;");
       let xml = `<?xml version="1.0" encoding="UTF-8"?>
