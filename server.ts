@@ -5715,6 +5715,139 @@ async function startServer() {
     }
   });
 
+  // ---- Platform-specific vehicle-ads feeds -------------------------------
+  // Facebook Automotive Inventory Ads and Google Vehicle Ads each require their
+  // own schema (FB: enum values + dealer address; Google: store_code + mileage
+  // with unit). The generic feeds above stay untouched for other consumers.
+  // Shared rules: Sold AND Pending Sale excluded (never advertise a car someone
+  // has a deposit on), unpriced excluded (no fake prices in ads, ever).
+
+  const DEALER = {
+    name: "Vehicle Approval Centre",
+    addr1: "110 Chain Lake Dr #3B",
+    city: "Halifax",
+    region: "NS",
+    postal: "B3S 1A9",
+    country: "CA",
+  };
+  const advertisable = (car: any) =>
+    car.status !== "Sold" && car.status !== "Pending Sale" && Number(car.price) > 0;
+  const FB_BODY: Record<string, string> = { SUV: "SUV", Sedan: "SEDAN", Truck: "TRUCK", Hatchback: "HATCHBACK", Van: "MINIVAN", Convertible: "CONVERTIBLE" };
+  const FB_FUEL: Record<string, string> = { Gasoline: "GASOLINE", Diesel: "DIESEL", Electric: "ELECTRIC", Hybrid: "HYBRID" };
+  const fbDrivetrain = (d: string) => {
+    const s = String(d || "").toUpperCase();
+    if (/AWD|4MOTION|XDRIVE|QUATTRO/.test(s)) return "AWD";
+    if (/4X4|4WD/.test(s)) return "4X4";
+    if (/FWD|FRONT/.test(s)) return "FWD";
+    if (/RWD|REAR/.test(s)) return "RWD";
+    return "";
+  };
+
+  // Facebook Automotive Inventory Ads feed (CSV) — Commerce Manager catalog,
+  // catalog type "vehicles", scheduled fetch of this URL.
+  app.get("/api/feeds/facebook-vehicles.csv", async (req, res) => {
+    try {
+      const { db } = await getFirestoreAdmin();
+      const snap = await db.collection("inventory").get();
+      const baseUrl = getFeedBaseUrl(req);
+      const q = (s: any) => `"${String(s ?? "").replace(/"/g, '""')}"`;
+      const headers = [
+        "vehicle_id", "title", "description", "url", "image[0].url", "make", "model", "year",
+        "mileage.value", "mileage.unit", "price", "state_of_vehicle", "vin", "condition",
+        "body_style", "transmission", "fuel_type", "drivetrain", "exterior_color", "interior_color",
+        "availability", "dealer_id", "dealer_name", "address",
+      ];
+      let csv = headers.join(",") + "\n";
+      snap.forEach((doc) => {
+        const car = doc.data();
+        if (!advertisable(car)) return;
+        const id = doc.id;
+        const title = `${car.year} ${car.make} ${car.model} ${car.trim || ""}`.trim();
+        const slug = slugify(title);
+        const link = slug ? `${baseUrl}/inventory/${slug}-${id}` : `${baseUrl}/inventory/${id}`;
+        const address = JSON.stringify({ addr1: DEALER.addr1, city: DEALER.city, region: DEALER.region, postal_code: DEALER.postal, country: DEALER.country });
+        csv += [
+          id, q(title), q((car.description || title).substring(0, 4900)), link, car.images?.[0] || "",
+          q(car.make), q(car.model), car.year, car.mileage || 0, "KM", `${car.price} CAD`,
+          "USED", car.vin || id, "GOOD",
+          FB_BODY[car.bodyStyle] || "OTHER",
+          String(car.transmission || "").toLowerCase().includes("man") ? "MANUAL" : "AUTOMATIC",
+          FB_FUEL[car.fuelType] || "OTHER",
+          fbDrivetrain(car.drivetrain), q(car.exteriorColor || ""), q(car.interiorColor || ""),
+          "AVAILABLE", "vac-halifax", q(DEALER.name), q(address),
+        ].join(",") + "\n";
+      });
+      res.header("Content-Type", "text/csv");
+      res.send(csv);
+    } catch (error) {
+      console.error("[FEED] facebook-vehicles error:", error);
+      res.status(500).send("Error generating feed");
+    }
+  });
+
+  // Google Vehicle Ads feed (XML) — Merchant Center vehicle-ads program.
+  // store_code must match the Google Business Profile location; override with
+  // ?store=<code> if the GBP code differs from the default.
+  app.get("/api/feeds/google-vehicles.xml", async (req, res) => {
+    try {
+      const { db } = await getFirestoreAdmin();
+      const snap = await db.collection("inventory").get();
+      const baseUrl = getFeedBaseUrl(req);
+      const storeCode = String(req.query.store || "VAC-HALIFAX");
+      let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:g="http://base.google.com/ns/1.0" version="2.0">
+  <channel>
+    <title>Vehicle Approval Centre — Vehicle Ads</title>
+    <link>${baseUrl}</link>
+    <description>Live used-vehicle inventory, ${DEALER.city} ${DEALER.region}</description>`;
+      snap.forEach((doc) => {
+        const car = doc.data();
+        if (!advertisable(car)) return;
+        const id = doc.id;
+        const title = `${car.year} ${car.make} ${car.model} ${car.trim || ""}`.trim();
+        const slug = slugify(title);
+        const link = slug ? `${baseUrl}/inventory/${slug}-${id}` : `${baseUrl}/inventory/${id}`;
+        let extraImgs = "";
+        (Array.isArray(car.images) ? car.images.slice(1, 10) : []).forEach((img: string) => {
+          if (img) extraImgs += `\n      <g:additional_image_link>${img}</g:additional_image_link>`;
+        });
+        xml += `
+    <item>
+      <g:id>${id}</g:id>
+      <g:vin>${car.vin || ""}</g:vin>
+      <g:store_code><![CDATA[${storeCode}]]></g:store_code>
+      <g:title><![CDATA[${title}]]></g:title>
+      <g:description><![CDATA[${(car.description || title).substring(0, 5000)}]]></g:description>
+      <g:link>${link}</g:link>
+      <g:image_link>${car.images?.[0] || ""}</g:image_link>${extraImgs}
+      <g:condition>used</g:condition>
+      <g:availability>in_stock</g:availability>
+      <g:price>${car.price} CAD</g:price>
+      <g:brand><![CDATA[${car.make}]]></g:brand>
+      <g:year>${car.year}</g:year>
+      <g:make><![CDATA[${car.make}]]></g:make>
+      <g:model><![CDATA[${car.model}]]></g:model>
+      <g:trim><![CDATA[${car.trim || ""}]]></g:trim>
+      <g:mileage>${car.mileage || 0} km</g:mileage>
+      <g:color><![CDATA[${car.exteriorColor || ""}]]></g:color>
+      <g:transmission><![CDATA[${car.transmission || ""}]]></g:transmission>
+      <g:fuel_type><![CDATA[${car.fuelType || ""}]]></g:fuel_type>
+      <g:body_style><![CDATA[${car.bodyStyle || ""}]]></g:body_style>
+      <g:drivetrain><![CDATA[${car.drivetrain || ""}]]></g:drivetrain>
+      <g:google_product_category>Vehicles &amp; Parts &gt; Vehicles &gt; Motor Vehicles &gt; Cars, Trucks &amp; Vans</g:google_product_category>
+    </item>`;
+      });
+      xml += `
+  </channel>
+</rss>`;
+      res.header("Content-Type", "application/xml");
+      res.send(xml);
+    } catch (error) {
+      console.error("[FEED] google-vehicles error:", error);
+      res.status(500).send("Error generating feed");
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
