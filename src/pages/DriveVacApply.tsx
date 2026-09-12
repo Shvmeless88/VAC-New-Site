@@ -7,7 +7,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import Logo from '@/components/layout/Logo';
-import ElfsightReviews from '@/components/ElfsightReviews';
 import { cn, cleanAndFormatPhone } from '@/lib/utils';
 import { getStoredUtms } from '@/lib/utms';
 import { trackPixelEvent } from '@/lib/pixel';
@@ -923,17 +922,10 @@ export default function DriveVacApply({ mode = 'leadgen' }: { mode?: 'leadgen' |
             </div>
           )}
 
-          {/* Live 5-star Google + Facebook reviews — dealership mode only. The
-              lead-gen funnel sells leads to OUTSIDE dealers, so VAC's dealership
-              reviews there would mislead applicants about who they're buying from. */}
-          {isDealership && (
-            <div className="mt-10">
-              <p className="text-center text-[11px] font-black uppercase tracking-[0.2em] text-gray-400 mb-4">
-                Drivers who applied before you
-              </p>
-              <ElfsightReviews />
-            </div>
-          )}
+          {/* NO reviews/extra content on this page: it's the application funnel.
+              The Elfsight widget lived here Sep 4–12, 2026 and cost-per-lead rose
+              sharply — review cards link out to Google/Facebook and distract from
+              finishing the form. Reviews stay on the homepage only. */}
 
           {/* Slim footer — legal + transparency. Legal pages are in-house drafts
               pending lawyer review (see DriveVacLegal.tsx). */}
