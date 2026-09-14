@@ -5441,6 +5441,36 @@ async function startServer() {
           }
           if (!picks.length) picks = [{ idx: 0, angle: "front three-quarter exterior", kind: "exterior" }];
 
+          // Straight-on FRONT reference for the anti-drift retry below. Brand-new
+          // facelift models (e.g. 2025 Elantra) drift to older model-year styling in
+          // the composite no matter how the prompt is worded; anchoring the nose with
+          // a dead-on front photo as a second reference image is what fixes it.
+          // Cached so at most one extra vision call happens per import.
+          let frontRefIdx = -2; // -2 = not looked up yet, -1 = none found
+          const findFrontRef = async (): Promise<number> => {
+            if (frontRefIdx !== -2) return frontRefIdx;
+            frontRefIdx = -1;
+            if (caps.length) {
+              const i = caps.findIndex((c) => /^\s*front\b/i.test(c) && !/seat|interior|quarter|3\/4|corner|driver|passenger/i.test(c));
+              if (i >= 0 && i < images.length) { frontRefIdx = i; return frontRefIdx; }
+            }
+            try {
+              const thumbs2: string[] = (car.photoUrls as string[]).map((u: string) => u.replace(/w_\d+,h_\d+/, "w_400,h_300"));
+              const n = Math.min(thumbs2.length, 16);
+              const parts2: any[] = [{ text: `These ${n} photos are numbered 0-${n - 1} in order. Reply ONLY JSON {"front": i} where i is the number of the photo showing the car STRAIGHT-ON from the front (nose centered, both headlights visible symmetrically, neither side of the car visible), or {"front": -1} if no photo shows that.` }];
+              for (let i = 0; i < n; i++) {
+                try { parts2.push({ inlineData: { mimeType: "image/jpeg", data: (await fetchBuf(thumbs2[i])).toString("base64") } }); }
+                catch { parts2.push({ text: `(photo ${i} unavailable)` }); }
+              }
+              const m = String(await gemini(parts2, false)).match(/\{[\s\S]*?\}/);
+              if (m) {
+                const i = Number(JSON.parse(m[0]).front);
+                if (i >= 0 && i < images.length) frontRefIdx = i;
+              }
+            } catch (fe) { console.error("[AUCTION-IMPORT] front-ref pick failed:", (fe as any)?.message); }
+            return frontRefIdx;
+          };
+
           const studio: string[] = [];
           let genN = 0;
           for (const pick of picks.slice(0, 5)) {
@@ -5462,21 +5492,58 @@ async function startServer() {
                 await new Promise((rs) => setTimeout(rs, 5000));
                 outBuf = await gemini(genParts, true);
               }
-              if (!outBuf || outBuf.length < 20000) continue;
               // Guard: the generated shot must show the SAME vehicle as the source —
               // if the model invented a car, throw the shot away.
-              try {
-                const verdict = String(await gemini([
-                  { text: `Photo A and photo B: (1) do they show the exact same vehicle (same colour, body style, wheels, trim)? (2) Does the vehicle wear a ${car.make} brand badge and match a ${String(car.bodyStyle || "").toLowerCase() || "car"} body style? Both must be true. (Do not reject just because you do not recognize the exact model name — newer models may be unfamiliar.) Ignore the background. Reply ONLY JSON: {"same":true} or {"same":false}.` },
-                  { inlineData: { mimeType: "image/jpeg", data: srcBuf.toString("base64") } },
-                  { inlineData: { mimeType: "image/jpeg", data: outBuf.toString("base64") } },
-                ], false));
-                if (!/"same"\s*:\s*true/i.test(verdict)) { console.error(`[AUCTION-IMPORT] studio shot rejected (vehicle mismatch) for ${pick.angle}`); continue; }
-              } catch (ve) {
-                // FAIL CLOSED: if we can't verify it's the same car, we don't publish it.
-                console.error(`[AUCTION-IMPORT] studio shot dropped (verification unavailable) for ${pick.angle}:`, (ve as any)?.message);
-                continue;
+              // Returns true/false, or null when verification itself is unavailable
+              // (null FAILS CLOSED: we never publish what we can't verify).
+              const verifySame = async (buf: Buffer): Promise<boolean | null> => {
+                try {
+                  const verdict = String(await gemini([
+                    { text: `Photo A and photo B: (1) do they show the exact same vehicle (same colour, body style, wheels, trim)? (2) Does the vehicle wear a ${car.make} brand badge and match a ${String(car.bodyStyle || "").toLowerCase() || "car"} body style? Both must be true. (Do not reject just because you do not recognize the exact model name — newer models may be unfamiliar.) Ignore the background. Reply ONLY JSON: {"same":true} or {"same":false}.` },
+                    { inlineData: { mimeType: "image/jpeg", data: srcBuf.toString("base64") } },
+                    { inlineData: { mimeType: "image/jpeg", data: buf.toString("base64") } },
+                  ], false));
+                  return /"same"\s*:\s*true/i.test(verdict);
+                } catch (ve) {
+                  console.error(`[AUCTION-IMPORT] studio shot verification unavailable for ${pick.angle}:`, (ve as any)?.message);
+                  return null;
+                }
+              };
+              let ok = false;
+              if (outBuf && outBuf.length >= 20000) {
+                const v = await verifySame(outBuf);
+                if (v === false) console.error(`[AUCTION-IMPORT] studio shot rejected (vehicle mismatch) for ${pick.angle}`);
+                ok = v === true;
               }
+              // ANTI-DRIFT RETRY: when the first composite fails (mismatch usually
+              // means the model drew an older model year of a brand-new design),
+              // regenerate once with a straight-on front photo as a second reference
+              // anchoring the real front-end design. Exterior hero only.
+              if (!ok && pick.kind === "exterior") {
+                const fi = await findFrontRef();
+                if (fi >= 0 && fi !== pick.idx) {
+                  console.error(`[AUCTION-IMPORT] retrying studio shot with front-reference anti-drift recipe (photo ${fi})`);
+                  try {
+                    const frontBuf = await fetchBuf(images[fi]);
+                    const retryPrompt = `Three images. Image 1 is a front three-quarter photo of a car — the ONLY car that may appear in your output, and the exact camera angle and framing to reproduce. Image 2 is a straight-on front photo of the SAME car — the authoritative reference for the front-end design: grille pattern, headlight and light-strip shapes, lower intake, badge placement. Image 3 is a fixed dealership showroom background plate (purple wall with white V logo, white wall, circular floor turntable on a polished light-grey floor). Produce a photorealistic composite: the exact car from image 1, at the exact same driver-side angle and framing as image 1 (never mirrored, rotated or re-posed; nose pointing LEFT toward the purple wall), parked dead-centre ON the turntable — all four tires resting on the platform, car spanning about 65% of the platform width, a clear ring of platform visible all the way around, turntable kept at its exact size and position from image 3, background exactly image 3's walls, logo, floor and lighting with nothing moved or restyled. The car may be a brand-new model whose styling is unfamiliar: copy its design EXACTLY as photographed in images 1 and 2 — grille pattern, light shapes, body creases, wheels, mirrors, badges and paint colour — and do NOT substitute the front end or any part of an older or similar vehicle. All glass must be perfectly clean — remove every sticker, label and paper from the windows. Adapt only the car's lighting and reflections to indoor studio light, with a natural soft contact shadow and subtle floor reflection under the tires. No text, no people, no extra objects.`;
+                    const retryParts = [
+                      { text: retryPrompt },
+                      { inlineData: { mimeType: "image/jpeg", data: srcBuf.toString("base64") } },
+                      { inlineData: { mimeType: "image/jpeg", data: frontBuf.toString("base64") } },
+                      { inlineData: { mimeType: "image/jpeg", data: plate.toString("base64") } },
+                    ];
+                    const retryBuf = await gemini(retryParts, true);
+                    if (retryBuf && retryBuf.length >= 20000) {
+                      const v2 = await verifySame(retryBuf);
+                      if (v2 === true) { outBuf = retryBuf; ok = true; }
+                      else if (v2 === false) console.error(`[AUCTION-IMPORT] anti-drift retry also rejected (vehicle mismatch) for ${pick.angle}`);
+                    } else {
+                      console.error(`[AUCTION-IMPORT] anti-drift retry returned no image for ${pick.angle}`);
+                    }
+                  } catch (re) { console.error("[AUCTION-IMPORT] anti-drift retry failed:", (re as any)?.message); }
+                }
+              }
+              if (!ok || !outBuf || outBuf.length < 20000) continue;
               const sPath = `${base}/studio-${studio.length}.jpg`;
               const sToken = crypto.randomUUID();
               await bucket.file(sPath).save(outBuf, { contentType: "image/jpeg", resumable: false, metadata: { metadata: { firebaseStorageDownloadTokens: sToken } } });
