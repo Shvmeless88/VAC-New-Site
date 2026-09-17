@@ -461,6 +461,7 @@ export default function CarDetails() {
   }, [isDesktopLightboxOpen, car?.images?.length]);
   const [showMobileFooter, setShowMobileFooter] = useState(false);
   const carouselRef = React.useRef<HTMLDivElement>(null);
+  const fsSwipeX = React.useRef<number | null>(null); // fullscreen photo-viewer swipe start
   const navRef = React.useRef<HTMLDivElement>(null);
   const overviewRef = React.useRef<HTMLDivElement>(null);
   const specsRef = React.useRef<HTMLDivElement>(null);
@@ -1151,9 +1152,9 @@ export default function CarDetails() {
 
             {/* Request More Photos — always available on thin galleries, even 1-photo cars */}
             {(car.images?.length || 0) <= 3 && car.status !== 'Sold' && (
-              <div className="pt-4 px-3 md:px-0">
+              <div className="pt-4 px-3 md:px-0 flex justify-center">
                 <button onClick={() => setPhotoReqOpen(true)}
-                  className="text-[13px] font-bold text-brand-accent border border-brand-accent/30 rounded-full px-4 py-2 hover:bg-brand-accent/5 transition">
+                  className="text-sm font-bold text-brand-accent border border-brand-accent/30 rounded-full px-6 py-2.5 hover:bg-brand-accent/5 transition">
                   📸 Request More Photos
                 </button>
               </div>
@@ -1229,9 +1230,12 @@ export default function CarDetails() {
                     <div className="rounded-full border border-slate-100 px-3 py-1 text-[10px] font-bold text-slate-600 uppercase tracking-widest bg-white">
                       150-Point Inspected
                     </div>
-                    <div className="rounded-full border border-slate-100 px-3 py-1 text-[10px] font-bold text-emerald-600 uppercase tracking-widest bg-white">
-                      360° Verified
-                    </div>
+                    {/* Only when the listing actually has a 360 (spin or interior) */}
+                    {(car.sirvUrl || car.interior360Photo || car.interior360Url) && (
+                      <div className="rounded-full border border-slate-100 px-3 py-1 text-[10px] font-bold text-emerald-600 uppercase tracking-widest bg-white">
+                        360° Verified
+                      </div>
+                    )}
                   </>
                 )}
                 {car.accidents === 0 && (
@@ -1757,7 +1761,7 @@ export default function CarDetails() {
             <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-[110] bg-gradient-to-b from-black/50 to-transparent">
               <div className="text-white">
                 <h2 className="font-bold text-lg">{car.year} {car.make} {car.model}</h2>
-                <p className="text-xs text-white/70">{fullWindowView === 'interior' ? '360° Interior Tour' : '360° Exterior Spin'}</p>
+                <p className="text-xs text-white/70">{fullWindowView === 'interior' ? '360° Interior Tour' : car.sirvUrl ? '360° Exterior Spin' : 'Photo Gallery'}</p>
               </div>
               <button 
                 onClick={() => setIsFullWindowOpen(false)}
@@ -1773,9 +1777,53 @@ export default function CarDetails() {
                 <div key="full-interior-container" className="w-full h-full">
                   <div id="full-panorama" className="w-full h-full"></div>
                 </div>
-              ) : (
+              ) : car.sirvUrl ? (
                 <div key="full-exterior-container" className="absolute inset-0 flex items-center justify-center bg-white">
                   <div id="sirv-full" className="Sirv !w-full !h-full" data-src={car.sirvUrl} data-options="fit:contain; autostart:false; margin:0; fullscreen.enable:false; zoom.enable:false;"></div>
+                </div>
+              ) : (
+                /* No Sirv spin (e.g. auction imports): fullscreen photo viewer.
+                   Rendering the empty Sirv div here shipped a blank white screen. */
+                <div
+                  key="full-photos-container"
+                  className="absolute inset-0 flex items-center justify-center bg-black select-none"
+                  onTouchStart={(e) => { fsSwipeX.current = e.touches[0].clientX; }}
+                  onTouchEnd={(e) => {
+                    const n = car.images?.length || 0;
+                    const start = fsSwipeX.current;
+                    fsSwipeX.current = null;
+                    if (start === null || n < 2) return;
+                    const dx = e.changedTouches[0].clientX - start;
+                    if (Math.abs(dx) > 40) setActiveImage((i) => (i + (dx < 0 ? 1 : n - 1)) % n);
+                  }}
+                >
+                  <img
+                    src={car.images?.[activeImage] || car.images?.[0] || 'https://picsum.photos/seed/car/800/600'}
+                    alt={`${car.year} ${car.make} ${car.model} photo ${activeImage + 1}`}
+                    className="max-w-full max-h-full object-contain"
+                    referrerPolicy="no-referrer"
+                  />
+                  {(car.images?.length || 0) > 1 && (
+                    <>
+                      <button
+                        onClick={() => setActiveImage((i) => (i + car.images!.length - 1) % car.images!.length)}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 rounded-full text-white z-[110]"
+                        aria-label="Previous photo"
+                      >
+                        <ChevronLeft className="h-6 w-6" />
+                      </button>
+                      <button
+                        onClick={() => setActiveImage((i) => (i + 1) % car.images!.length)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 rounded-full text-white z-[110]"
+                        aria-label="Next photo"
+                      >
+                        <ChevronRight className="h-6 w-6" />
+                      </button>
+                      <div className="absolute bottom-24 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/50 text-white text-xs font-bold z-[110]">
+                        {activeImage + 1} / {car.images!.length}
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>

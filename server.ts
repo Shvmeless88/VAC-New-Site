@@ -5561,7 +5561,9 @@ async function startServer() {
       const nowIso2 = new Date().toISOString();
       const data: any = {
         vin: car.vin || null, stockNumber: null,
-        year: car.year, make: car.make, model: car.model, trim: car.trim || "",
+        // Auction titles arrive truncated ("Preferred IVT w/Tech...") — a trailing
+        // ellipsis is source noise, never part of a real trim name.
+        year: car.year, make: car.make, model: car.model, trim: String(car.trim || "").replace(/[.…]{2,}\s*$|…\s*$/u, "").trim(),
         mileage: car.mileage || 0, price: finalPrice, ...marketFields,
         bodyStyle: car.bodyStyle || "", drivetrain: car.drivetrain || "", engine: car.engine || "",
         transmission: /auto|cvt/i.test(car.transmission) ? "Automatic" : (car.transmission || "Automatic"),
