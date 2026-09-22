@@ -13,7 +13,7 @@ import { trackPixelEvent } from '@/lib/pixel';
 import { trackGTMEvent } from '@/lib/gtm';
 import {
   CheckCircle2, ArrowRight, ArrowLeft, Loader2, Lock, Zap, Truck as TruckIcon,
-  CarFront as SuvIcon, Car as CarIcon, Bus as VanIcon, AlertTriangle, Home, ShieldCheck, Users,
+  CarFront as SuvIcon, Car as CarIcon, Bus as VanIcon, AlertTriangle, Home, Users,
 } from 'lucide-react';
 
 // Bump this whenever the consent wording below changes. Stored with every lead
@@ -891,7 +891,6 @@ export default function DriveVacApply({ mode = 'leadgen' }: { mode?: 'leadgen' |
             <div className="mt-6 space-y-6">
               <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
                 {[
-                  { Icon: ShieldCheck, label: "Won't affect your credit" },
                   { Icon: CheckCircle2, label: 'Every credit situation' },
                   { Icon: Lock, label: 'Secure & private' },
                 ].map(({ Icon, label }) => (
