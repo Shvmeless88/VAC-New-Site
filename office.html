@@ -11,7 +11,7 @@ header{display:flex;align-items:center;justify-content:space-between}
 .btn{background:var(--accent);color:#fff;border:none;border-radius:.7vh;padding:.9vh 1.2vw;font-size:1.5vh;font-weight:700;cursor:pointer}
 .goal{width:5vw;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:.6vh;padding:.7vh .6vw;font-size:1.5vh}
 .updated{font-size:1.3vh;color:var(--muted)}
-.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:1vw}
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:1vw}
 .kpi{background:var(--panel);border:1px solid var(--line);border-radius:1vh;padding:1.3vh 1.4vw}
 .kpi .l{font-size:1.4vh;color:var(--muted);text-transform:uppercase;letter-spacing:.12vw}
 .kpi .v{font-size:4vh;font-weight:800;margin-top:.3vh;font-variant-numeric:tabular-nums}
@@ -61,6 +61,7 @@ header{display:flex;align-items:center;justify-content:space-between}
  <div class="kpi"><div class="l">Gross MTD (posted)</div><div class="v" id="k_gross">—</div><div class="s amber" id="k_gross_s"></div></div>
  <div class="kpi"><div class="l">Avg Gross / Unit</div><div class="v" id="k_avg">—</div><div class="s">posted deals</div></div>
  <div class="kpi"><div class="l">Pace to Goal</div><div class="v" id="k_pace">—</div><div class="s" id="k_pace_s"></div><div class="pacebar"><span id="k_pace_bar"></span></div></div>
+ <div class="kpi"><div class="l">&#128200; Ad Spend MTD</div><div class="v" id="k_spend">—</div><div class="s" id="k_spend_s"></div><div class="s" id="k_spend_s2"></div></div>
 </div>
 <div class="main">
  <div class="card"><h2>Leaderboard — Units &amp; Gross (MTD)</h2><div class="lb" id="lb"></div></div>
@@ -127,6 +128,9 @@ async function load(){try{
   if(r.status===401){location.reload();return;}
   const j=await r.json();
   render(j.deals||[], j.updatedAt?new Date(j.updatedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'');
+  if(j.adSpend&&j.adSpend.total){const a=j.adSpend;$('k_spend').textContent=money(a.total);
+    $('k_spend_s').textContent='G '+money(a.google||0)+' · M '+money(a.facebook||0)+' · T '+money(a.tiktok||0);
+    const u=(j.deals||[]).length;$('k_spend_s2').textContent=u?money(a.total/u)+' per unit sold':'';}
 }catch(e){$('mlabel').textContent='Reconnecting…';}}
 load();setInterval(load,10*60*1000);
 setTimeout(()=>location.reload(),24*60*60*1000);
