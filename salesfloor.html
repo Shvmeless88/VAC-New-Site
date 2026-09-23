@@ -1,0 +1,107 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer"><title>VAC Sales Floor</title>
+<style>
+:root{--bg:#0b1020;--panel:#141b33;--panel2:#1b2340;--ink:#f5f7ff;--muted:#8b93b4;--accent:#6C5CE7;--gold:#ffce54;--green:#2ecc71;--line:#26304f;}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;overflow:hidden}
+.wrap{height:100vh;display:flex;flex-direction:column;padding:1.4vh 1.6vw;gap:1.1vh}
+header{display:flex;align-items:center;justify-content:space-between}
+.brand{font-size:2.6vh;font-weight:800;letter-spacing:.15vw}.brand span{color:var(--accent)}
+.sub{font-size:1.5vh;color:var(--muted);letter-spacing:.1vw}
+.hctl{display:flex;align-items:center;gap:1vw}.clock{font-size:2vh;color:var(--muted);font-variant-numeric:tabular-nums}
+.goal{width:5vw;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:.6vh;padding:.7vh .6vw;font-size:1.5vh}
+.updated{font-size:1.3vh;color:var(--muted)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:1.2vw}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:1vh;padding:1.5vh 1.4vw}
+.kpi .l{font-size:1.5vh;color:var(--muted);text-transform:uppercase;letter-spacing:.12vw}
+.kpi .v{font-size:4.6vh;font-weight:800;margin-top:.3vh;font-variant-numeric:tabular-nums}
+.kpi .s{font-size:1.4vh;color:var(--muted);margin-top:.3vh}
+.kpi.gold{border-color:var(--gold);background:linear-gradient(180deg,rgba(255,206,84,.16),var(--panel))}
+.kpi.gold .l,.kpi.gold .v{color:var(--gold)}
+.pacebar{height:1vh;background:#0c1330;border-radius:1vh;margin-top:.9vh;overflow:hidden}.pacebar>span{display:block;height:100%;background:linear-gradient(90deg,var(--accent),#a99bff)}
+.main{flex:1;display:grid;grid-template-columns:1.3fr 1fr;gap:1.2vw;min-height:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:1.2vh;padding:1.4vh 1.4vw;display:flex;flex-direction:column;min-height:0}
+.card h2{font-size:1.8vh;letter-spacing:.14vw;text-transform:uppercase;color:var(--muted);margin-bottom:1vh}
+.lb{flex:1;display:flex;flex-direction:column;gap:.6vh;overflow:hidden}
+.row{display:grid;grid-template-columns:2.8vw 1fr auto;align-items:center;gap:1vw;background:var(--panel2);border-radius:.8vh;padding:.85vh 1.1vw}
+.row.top{background:linear-gradient(90deg,rgba(108,92,231,.4),var(--panel2));border:1px solid var(--accent)}
+.rank{font-size:2.4vh;font-weight:800;color:var(--muted);text-align:center}.row.top .rank{color:var(--gold)}
+.nm{font-size:2.2vh;font-weight:700}
+.barwrap{height:.8vh;background:#0c1330;border-radius:1vh;margin-top:.5vh;overflow:hidden;width:100%}.barwrap>span{display:block;height:100%;background:var(--accent)}
+.row.top .barwrap>span{background:var(--gold)}
+.stat .u{font-size:2.8vh;font-weight:800}
+.feature{flex:1;display:flex;flex-direction:column;min-height:0}
+.photo{flex:1;border-radius:1vh;background:#0c1330 center/cover no-repeat;min-height:0;position:relative;border:1px solid var(--line);overflow:hidden}
+.badge{position:absolute;top:1.2vh;left:1.2vh;font-weight:800;font-size:1.6vh;padding:.5vh 1.1vw;border-radius:.6vh;letter-spacing:.12vw;z-index:2;background:var(--green);color:#04210f}
+.soldby{position:absolute;left:0;right:0;bottom:0;z-index:2;padding:6vh 1.4vw 1.4vh;background:linear-gradient(to top,rgba(6,10,24,.94),rgba(6,10,24,.5) 60%,transparent)}
+.soldby .sbl{font-size:1.6vh;color:var(--gold);letter-spacing:.14vw;text-transform:uppercase;font-weight:700}
+.soldby .sbn{font-size:4.2vh;font-weight:800;line-height:1.05;margin-top:.2vh}
+.soldby .veh{font-size:2vh;color:#cfd5ee;margin-top:.6vh}
+.dots{display:flex;gap:.5vw;justify-content:center;margin-top:1vh}
+.dot{width:.9vh;height:.9vh;border-radius:50%;background:#2a355c}.dot.on{background:var(--accent)}
+.noimg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:2.6vh;text-align:center;padding:2vh;z-index:1}
+</style></head><body>
+<div class="wrap">
+<header>
+ <div><div class="brand">VEHICLE APPROVAL CENTRE <span>· SALES FLOOR</span></div><div class="sub" id="mlabel">Loading…</div></div>
+ <div class="hctl"><span class="updated" id="updated"></span>Goal <input class="goal" id="goalin" type="number" min="1"><div class="clock" id="clock"></div></div>
+</header>
+<div class="kpis">
+ <div class="kpi"><div class="l">Units This Month</div><div class="v" id="k_units">—</div><div class="s" id="k_units_s"></div></div>
+ <div class="kpi"><div class="l">Sold Today</div><div class="v" id="k_today">—</div><div class="s" id="k_today_s"></div></div>
+ <div class="kpi gold"><div class="l">&#128176; Pot of Gold</div><div class="v" id="k_pot">—</div><div class="s" id="k_pot_s"></div></div>
+ <div class="kpi"><div class="l">Pace to Goal</div><div class="v" id="k_pace">—</div><div class="s" id="k_pace_s"></div><div class="pacebar"><span id="k_pace_bar"></span></div></div>
+</div>
+<div class="main">
+ <div class="card"><h2>Leaderboard — Units Sold</h2><div class="lb" id="lb"></div></div>
+ <div class="card"><h2>Just Sold</h2><div class="feature">
+   <div class="photo" id="photo"><div class="badge">SOLD</div><div class="soldby"><div class="sbl">Sold by</div><div class="sbn" id="f_rep"></div><div class="veh" id="f_veh"></div></div></div>
+   <div class="dots" id="dots"></div>
+ </div></div>
+</div>
+</div>
+<script>
+// Data comes from /api/salesfloor-data (updated by the morning PBS routine, and
+// automatically once the PBS SFTP feed is live). Re-fetches every 10 minutes and
+// reloads the whole page daily so code updates reach the TV without a visit.
+const FB="https://firebasestorage.googleapis.com/v0/b/gen-lang-client-0753805028.firebasestorage.app/o/inventory-imports%2F";
+const $=id=>document.getElementById(id);
+const money=n=>'$'+Math.round(n).toLocaleString('en-US');
+let DEALS=[],rot=null,idx=0;
+function render(deals,stamp){DEALS=deals;if(!deals.length){$('mlabel').textContent='No sales yet this month';return;}
+  const units=deals.length;
+  const maxStr=deals.map(d=>d.date).sort().slice(-1)[0];const maxD=new Date(maxStr+'T00:00:00');
+  const today=deals.filter(d=>d.date===maxStr).length;
+  const dim=new Date(maxD.getFullYear(),maxD.getMonth()+1,0).getDate(),el=maxD.getDate();
+  const proj=Math.round(units/el*dim),goal=Number(localStorage.getItem('vacGoal')||65);$('goalin').value=goal;
+  const per=Number(localStorage.getItem('vacPot')||50);
+  $('mlabel').textContent=maxD.toLocaleDateString('en-US',{month:'long',year:'numeric'}).toUpperCase()+' · through '+maxD.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  $('k_units').textContent=units;$('k_units_s').textContent=(units/el).toFixed(1)+' / day';
+  $('k_today').textContent=today;$('k_today_s').textContent=maxD.toLocaleDateString('en-US',{weekday:'long',month:'short',day:'numeric'});
+  $('k_pot').textContent=money(units*per);$('k_pot_s').textContent='$'+per+' × '+units+' deals';
+  $('k_pace').textContent=proj+' proj.';$('k_pace_s').textContent='goal '+goal+' · '+(proj>=goal?'on track!':(goal-proj)+' to go');$('k_pace_bar').style.width=Math.min(100,proj/goal*100)+'%';
+  if(stamp)$('updated').textContent='Updated '+stamp;
+  const lb={};for(const d of deals){lb[d.rep]=(lb[d.rep]||0)+1;}
+  const rk=Object.entries(lb).map(([n,u])=>({n,u})).sort((a,b)=>b.u-a.u);const mx=rk[0].u;
+  $('lb').innerHTML=rk.map((r,i)=>`<div class="row ${i===0?'top':''}"><div class="rank">${i+1}</div><div><div class="nm">${r.n}</div><div class="barwrap"><span style="width:${r.u/mx*100}%"></span></div></div><div class="stat"><div class="u">${r.u}</div></div></div>`).join('');
+  idx=0;showDeal(0);if(rot)clearInterval(rot);rot=setInterval(()=>{idx=(idx+1)%Math.min(DEALS.length,10);showDeal(idx);},6000);
+}
+function showDeal(i){const d=DEALS[i];if(!d)return;
+  $('f_rep').textContent=d.rep;
+  $('f_veh').textContent=(d.ymm+(d.trim?' '+d.trim:''))+'  ·  '+new Date(d.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  const ph=$('photo');[...ph.querySelectorAll('.noimg')].forEach(e=>e.remove());ph.style.backgroundImage='none';
+  const fb=()=>{ph.style.backgroundImage='none';ph.insertAdjacentHTML('afterbegin','<div class="noimg">'+d.ymm+'</div>');};
+  if(d.vin){const u=[FB+d.vin+'%2Fstudio-0.jpg?alt=media',FB+d.vin+'%2Fstudio-1.jpg?alt=media'];let t=0;const im=new Image();im.onload=()=>ph.style.backgroundImage=`url("${im.src}")`;im.onerror=()=>{if(t<u.length-1){t++;im.src=u[t];}else fb();};im.src=u[0];}else fb();
+  $('dots').innerHTML=DEALS.slice(0,Math.min(10,DEALS.length)).map((_,j)=>`<div class="dot ${j===i%10?'on':''}"></div>`).join('');
+}
+async function load(){try{
+  const r=await fetch('/api/salesfloor-data');
+  if(r.status===401){location.reload();return;}
+  const j=await r.json();
+  render(j.deals||[], j.updatedAt?new Date(j.updatedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'');
+}catch(e){$('mlabel').textContent='Reconnecting…';}}
+$('goalin').addEventListener('change',e=>{localStorage.setItem('vacGoal',e.target.value||65);if(DEALS.length)render(DEALS,$('updated').textContent.replace('Updated ',''));});
+load();setInterval(load,10*60*1000);
+setTimeout(()=>location.reload(),24*60*60*1000);
+function tick(){const n=new Date();$('clock').textContent=n.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})+'  ·  '+n.toLocaleDateString('en-US',{weekday:'long'});}
+tick();setInterval(tick,10000);
+</script></body></html>

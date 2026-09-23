@@ -5920,6 +5920,57 @@ async function startServer() {
     }
   });
 
+  // ---- Sales floor TV board: hidden URL + PIN gate ----
+  // The board itself is salesfloor.html; deals data lives in Firestore doc
+  // config/salesfloor (written by the morning PBS routine, later by the PBS
+  // SFTP feed) so the TV updates with no deploy. PIN comes from the Cloud Run
+  // env var SALESFLOOR_PIN — never hardcode it here.
+  {
+    const nodeCrypto = await import("crypto");
+    const SF_ROUTE = "/salesfloor-ehglbxxgkujz";
+    const sfPin = () => process.env.SALESFLOOR_PIN || "";
+    const sfCookieVal = () => nodeCrypto.createHash("sha256").update(`sfb:${sfPin()}:${SF_ROUTE}`).digest("hex").slice(0, 32);
+    const sfAuthed = (req: any) => !!sfPin() && String(req.headers.cookie || "").includes(`sfb=${sfCookieVal()}`);
+    const noindex = (res: any) => { res.setHeader("X-Robots-Tag", "noindex, nofollow"); res.setHeader("Cache-Control", "no-store"); };
+
+    app.get(SF_ROUTE, (req, res) => {
+      noindex(res);
+      if (sfAuthed(req)) return res.sendFile(path.join(process.cwd(), "salesfloor.html"));
+      res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>VAC</title>
+<style>body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b1020;color:#f5f7ff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif}
+.b{text-align:center}.t{font-weight:800;font-size:22px;letter-spacing:2px}.t span{color:#6C5CE7}
+input{margin-top:18px;background:#141b33;border:1px solid #26304f;color:#f5f7ff;font-size:28px;letter-spacing:12px;text-align:center;border-radius:10px;padding:12px 6px;width:230px;outline:none}
+.e{color:#ff7675;font-size:14px;height:18px;margin-top:10px}</style></head><body><div class="b">
+<div class="t">VEHICLE APPROVAL CENTRE <span>· SALES FLOOR</span></div>
+<input id="p" type="password" inputmode="numeric" autocomplete="off" maxlength="8" autofocus placeholder="PIN"><div class="e" id="e"></div></div>
+<script>const p=document.getElementById('p'),e=document.getElementById('e');
+p.addEventListener('input',async()=>{if(p.value.length<4)return;const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:p.value})});
+if(r.ok)location.reload();else{if(p.value.length>=5){e.textContent='Wrong PIN';p.value='';}}});</script></body></html>`);
+    });
+
+    app.post(SF_ROUTE, (req, res) => {
+      noindex(res);
+      const pin = String(req.body?.pin || "");
+      if (!sfPin() || pin !== sfPin()) return res.status(401).json({ ok: false });
+      res.setHeader("Set-Cookie", `sfb=${sfCookieVal()}; Max-Age=31536000; Path=/; HttpOnly; Secure; SameSite=Lax`);
+      res.json({ ok: true });
+    });
+
+    app.get("/api/salesfloor-data", async (req, res) => {
+      noindex(res);
+      if (!sfAuthed(req)) return res.status(401).json({ error: "unauthorized" });
+      try {
+        const { db } = await getFirestoreAdmin();
+        const snap = await db.collection("config").doc("salesfloor").get();
+        const d = snap.exists ? snap.data() : {};
+        res.json({ deals: d?.deals || [], updatedAt: d?.updatedAt || null });
+      } catch (e: any) {
+        console.error("[SALESFLOOR]", e?.message);
+        res.status(500).json({ error: "data unavailable" });
+      }
+    });
+  }
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
