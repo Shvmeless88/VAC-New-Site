@@ -1,0 +1,135 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VAC Sales Floor</title>
+<style>
+:root{--bg:#0b1020;--panel:#141b33;--panel2:#1b2340;--ink:#f5f7ff;--muted:#8b93b4;--accent:#6C5CE7;--gold:#ffce54;--green:#2ecc71;--amber:#ffb020;--line:#26304f;}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;overflow:hidden}
+.wrap{height:100vh;display:flex;flex-direction:column;padding:1.4vh 1.6vw;gap:1vh}
+header{display:flex;align-items:center;justify-content:space-between}
+.brand{font-size:2.5vh;font-weight:800;letter-spacing:.15vw}.brand span{color:var(--accent)}
+.sub{font-size:1.5vh;color:var(--muted);letter-spacing:.1vw}
+.hctl{display:flex;align-items:center;gap:1vw}.clock{font-size:2vh;color:var(--muted);font-variant-numeric:tabular-nums}
+.btn{background:var(--accent);color:#fff;border:none;border-radius:.7vh;padding:.9vh 1.2vw;font-size:1.5vh;font-weight:700;cursor:pointer}
+.goal{width:5vw;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:.6vh;padding:.7vh .6vw;font-size:1.5vh}
+.updated{font-size:1.3vh;color:var(--muted)}
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:1vw}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:1vh;padding:1.3vh 1.4vw}
+.kpi .l{font-size:1.4vh;color:var(--muted);text-transform:uppercase;letter-spacing:.12vw}
+.kpi .v{font-size:4vh;font-weight:800;margin-top:.3vh;font-variant-numeric:tabular-nums}
+.kpi .s{font-size:1.3vh;color:var(--muted);margin-top:.3vh}
+.kpi .s.amber{color:var(--amber)}
+.kpi.gold{border-color:var(--gold);background:linear-gradient(180deg,rgba(255,206,84,.16),var(--panel))}
+.kpi.gold .l,.kpi.gold .v{color:var(--gold)}
+.pacebar{height:1vh;background:#0c1330;border-radius:1vh;margin-top:.8vh;overflow:hidden}.pacebar>span{display:block;height:100%;background:linear-gradient(90deg,var(--accent),#a99bff)}
+.main{flex:1;display:grid;grid-template-columns:1.35fr 1fr;gap:1.2vw;min-height:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:1.2vh;padding:1.3vh 1.4vw;display:flex;flex-direction:column;min-height:0}
+.card h2{font-size:1.7vh;letter-spacing:.14vw;text-transform:uppercase;color:var(--muted);margin-bottom:1vh}
+.lb{flex:1;display:flex;flex-direction:column;gap:.55vh;overflow:hidden}
+.row{display:grid;grid-template-columns:2.6vw 1fr auto;align-items:center;gap:1vw;background:var(--panel2);border-radius:.8vh;padding:.7vh 1vw}
+.row.top{background:linear-gradient(90deg,rgba(108,92,231,.35),var(--panel2));border:1px solid var(--accent)}
+.rank{font-size:2.2vh;font-weight:800;color:var(--muted);text-align:center}.row.top .rank{color:var(--gold)}
+.nm{font-size:2vh;font-weight:700}
+.barwrap{height:.7vh;background:#0c1330;border-radius:1vh;margin-top:.5vh;overflow:hidden;width:100%}.barwrap>span{display:block;height:100%;background:var(--accent)}
+.stat{text-align:right}.stat .u{font-size:2.3vh;font-weight:800}.stat .g{font-size:1.4vh;color:var(--muted);font-variant-numeric:tabular-nums}.stat .g .pend{color:var(--amber)}
+.feature{flex:1;display:flex;flex-direction:column;min-height:0}
+.photo{flex:1;border-radius:1vh;background:#0c1330 center/cover no-repeat;min-height:0;position:relative;border:1px solid var(--line);overflow:hidden}
+.badge{position:absolute;top:1.2vh;left:1.2vh;font-weight:800;font-size:1.5vh;padding:.5vh 1vw;border-radius:.6vh;letter-spacing:.1vw;z-index:2;background:var(--green);color:#04210f}
+.badge.prov{background:var(--amber);color:#2a1a00}
+.soldby{position:absolute;left:0;right:0;bottom:0;z-index:2;padding:5vh 1.4vw 1.2vh;background:linear-gradient(to top,rgba(6,10,24,.94),rgba(6,10,24,.55) 55%,transparent);display:flex;align-items:flex-end;justify-content:space-between;gap:1vw}
+.soldby .sbl{font-size:1.5vh;color:var(--gold);letter-spacing:.14vw;text-transform:uppercase;font-weight:700}
+.soldby .sbn{font-size:3.6vh;font-weight:800;line-height:1.05}
+.soldby .veh{font-size:1.7vh;color:var(--muted);margin-top:.4vh}
+.soldby .gross{font-size:3.2vh;font-weight:800;color:var(--green);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.soldby .gross.prov{color:var(--amber);font-size:1.9vh;font-weight:800}
+.soldby .gross.prov small{display:block;font-size:1.2vh;color:var(--amber);font-weight:600}
+.dots{display:flex;gap:.5vw;justify-content:center;margin-top:1vh}
+.dot{width:.8vh;height:.8vh;border-radius:50%;background:#2a355c}.dot.on{background:var(--accent)}
+.noimg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:2.4vh;text-align:center;padding:2vh;z-index:1}
+#drop{position:fixed;inset:0;background:rgba(6,10,24,.96);z-index:50;display:none;flex-direction:column;align-items:center;justify-content:center;gap:2vh;text-align:center}
+#drop.show{display:flex}#drop.drag{background:rgba(108,92,231,.25);outline:.4vh dashed var(--accent);outline-offset:-2vh}
+#drop .big{font-size:3vh;font-weight:800}#drop .mut{color:var(--muted);font-size:1.8vh;max-width:60vw}
+</style></head><body>
+<div id="drop"><div class="big">Drop this morning's PBS export here</div><div class="mut">…or click to choose the CSV. Read entirely in this browser - nothing leaves the screen. Shows the newest month in the file automatically.</div><button class="btn" id="pickbtn">Choose CSV file</button></div>
+<input type="file" id="file" accept=".csv" style="display:none">
+<div class="wrap">
+<header>
+ <div><div class="brand">VEHICLE APPROVAL CENTRE <span>· SALES FLOOR</span></div><div class="sub" id="mlabel">No data loaded</div></div>
+ <div class="hctl"><span class="updated" id="updated"></span>Goal <input class="goal" id="goalin" type="number" min="1"><button class="btn" id="loadbtn">⇪ Load export</button><div class="clock" id="clock"></div></div>
+</header>
+<div class="kpis">
+ <div class="kpi"><div class="l">Units MTD</div><div class="v" id="k_units">—</div><div class="s" id="k_units_s"></div></div>
+ <div class="kpi gold"><div class="l">💰 Pot of Gold</div><div class="v" id="k_pot">—</div><div class="s" id="k_pot_s"></div></div>
+ <div class="kpi"><div class="l">Gross MTD (posted)</div><div class="v" id="k_gross">—</div><div class="s amber" id="k_gross_s"></div></div>
+ <div class="kpi"><div class="l">Avg Gross / Unit</div><div class="v" id="k_avg">—</div><div class="s">posted deals</div></div>
+ <div class="kpi"><div class="l">Pace to Goal</div><div class="v" id="k_pace">—</div><div class="s" id="k_pace_s"></div><div class="pacebar"><span id="k_pace_bar"></span></div></div>
+</div>
+<div class="main">
+ <div class="card"><h2>Leaderboard — Units &amp; Gross (MTD)</h2><div class="lb" id="lb"></div></div>
+ <div class="card"><h2>Just Sold</h2><div class="feature">
+   <div class="photo" id="photo"><div class="badge" id="badge">SOLD</div><div class="soldby"><div><div class="sbl">Sold by</div><div class="sbn" id="f_rep"></div><div class="veh" id="f_veh"></div></div><div class="gross" id="f_gross"></div></div></div>
+   <div class="dots" id="dots"></div>
+ </div></div>
+</div>
+</div>
+<script>
+const SEED=[];
+const FB="https://firebasestorage.googleapis.com/v0/b/gen-lang-client-0753805028.firebasestorage.app/o/inventory-imports%2F";
+const $=id=>document.getElementById(id);
+const money=n=>'$'+Math.round(n).toLocaleString('en-US');
+const num=v=>{v=(v||'').replace(/[$,]/g,'').replace('–','-').trim();const n=parseFloat(v);return isNaN(n)?0:n;};
+const posted=d=>String(d.status||'').trim().toLowerCase()==='posted';   // only Posted deals are fully accounted
+function parseCSV(s){const R=[];let row=[],cur='',q=false;for(let i=0;i<s.length;i++){const c=s[i];if(q){if(c=='"'){if(s[i+1]=='"'){cur+='"';i++;}else q=false;}else cur+=c;}else{if(c=='"')q=true;else if(c==','){row.push(cur);cur='';}else if(c=='\n'){row.push(cur);R.push(row);row=[];cur='';}else if(c=='\r'){}else cur+=c;}}if(cur.length||row.length){row.push(cur);R.push(row);}return R;}
+function processCSV(text){const rows=parseCSV(text);let h=0;for(let i=0;i<Math.min(rows.length,6);i++){if(rows[i].includes('Sold Date')){h=i;break;}}
+  const H=rows[h],ix=n=>H.indexOf(n);
+  const iS=ix('Stock'),iG=ix('Deal Gross'),iD=ix('Sold Date'),iR=ix('Sales Rep'),iY=ix('Year'),iM=ix('Make'),iMo=ix('Model'),iV=ix('VIN'),iSt=ix('Status'),iT=ix('Trim');
+  const all=[];for(let i=h+1;i<rows.length;i++){const r=rows[i];if(!r||r.length<=iD)continue;const m=(r[iD]||'').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);if(!m)continue;
+    all.push({ym:m[3]+'-'+String(+m[1]).padStart(2,'0'),date:m[3]+'-'+String(+m[1]).padStart(2,'0')+'-'+String(+m[2]).padStart(2,'0'),stock:(r[iS]||'').trim(),vin:(r[iV]||'').trim().toLowerCase(),gross:Math.round(num(r[iG])),status:(r[iSt]||'').trim(),rep:(r[iR]||'').trim()||'Unassigned',ymm:`${(r[iY]||'').trim()} ${(r[iM]||'').trim()} ${(r[iMo]||'').trim()}`.replace(/\b\w/g,c=>c.toUpperCase()),trim:iT>=0&&iT<r.length?(r[iT]||'').trim():''});}
+  const months=[...new Set(all.map(d=>d.ym))].sort();const cur=months[months.length-1];
+  return all.filter(d=>d.ym===cur).sort((a,b)=>a.date<b.date?1:-1);
+}
+let DEALS=[],rot=null,idx=0;
+function render(deals,stamp){DEALS=deals;if(!deals.length){$('mlabel').textContent='No sales in file';return;}
+  const units=deals.length;const pd=deals.filter(posted);const np=units-pd.length;
+  const gross=pd.reduce((a,d)=>a+d.gross,0);const avg=pd.length?gross/pd.length:0;
+  const maxD=new Date(deals.map(d=>d.date).sort().slice(-1)[0]+'T00:00:00');
+  const dim=new Date(maxD.getFullYear(),maxD.getMonth()+1,0).getDate(),el=maxD.getDate();
+  const proj=Math.round(units/el*dim),goal=Number(localStorage.getItem('vacGoal')||65);$('goalin').value=goal;
+  $('mlabel').textContent=maxD.toLocaleDateString('en-US',{month:'long',year:'numeric'}).toUpperCase()+' · through '+maxD.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  $('k_units').textContent=units;$('k_units_s').textContent=(units/el).toFixed(1)+' / day';
+  const per=Number(localStorage.getItem('vacPot')||50);$('k_pot').textContent=money(units*per);$('k_pot_s').textContent='$'+per+' × '+units+' deals';
+  $('k_gross').textContent=money(gross);$('k_gross_s').textContent=pd.length+' posted · '+np+' not posted yet';
+  $('k_avg').textContent=money(avg);
+  $('k_pace').textContent=proj+' proj.';$('k_pace_s').textContent='goal '+goal+' · '+(proj>=goal?'on track':(goal-proj)+' behind');$('k_pace_bar').style.width=Math.min(100,proj/goal*100)+'%';
+  if(stamp)$('updated').textContent='Updated '+stamp;
+  const lb={};for(const d of deals){const o=lb[d.rep]=lb[d.rep]||{u:0,g:0,p:0};o.u++;if(posted(d))o.g+=d.gross;else o.p++;}
+  const rk=Object.entries(lb).map(([n,v])=>({n,...v})).sort((a,b)=>b.u-a.u||b.g-a.g);const mx=Math.max(...rk.map(r=>r.u));
+  $('lb').innerHTML=rk.map((r,i)=>`<div class="row ${i===0?'top':''}"><div class="rank">${i+1}</div><div><div class="nm">${r.n}</div><div class="barwrap"><span style="width:${r.u/mx*100}%"></span></div></div><div class="stat"><div class="u">${r.u}</div><div class="g">${money(r.g)}${r.p?' <span class="pend">+'+r.p+' pend</span>':''}</div></div></div>`).join('');
+  idx=0;showDeal(0);if(rot)clearInterval(rot);rot=setInterval(()=>{idx=(idx+1)%Math.min(DEALS.length,10);showDeal(idx);},6000);
+}
+function showDeal(i){const d=DEALS[i];if(!d)return;const isP=posted(d);
+  $('f_rep').textContent=d.rep;
+  $('f_veh').textContent=(d.ymm+(d.trim?' '+d.trim:''))+'  ·  '+new Date(d.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  const fg=$('f_gross'),bg=$('badge');
+  if(isP){fg.className='gross';fg.textContent=money(d.gross);bg.className='badge';bg.textContent='POSTED';}
+  else{fg.className='gross prov';fg.innerHTML='PROVISIONAL<small>not posted yet</small>';bg.className='badge prov';bg.textContent='SOLD · PENDING';}
+  const ph=$('photo');[...ph.querySelectorAll('.noimg')].forEach(e=>e.remove());ph.style.backgroundImage='none';
+  const fb=()=>{ph.style.backgroundImage='none';ph.insertAdjacentHTML('afterbegin','<div class="noimg">'+d.ymm+'</div>');};
+  if(d.vin){const u=[FB+d.vin+'%2Fstudio-0.jpg?alt=media',FB+d.vin+'%2Fstudio-1.jpg?alt=media'];let t=0;const im=new Image();im.onload=()=>ph.style.backgroundImage=`url("${im.src}")`;im.onerror=()=>{if(t<u.length-1){t++;im.src=u[t];}else fb();};im.src=u[0];}else fb();
+  $('dots').innerHTML=DEALS.slice(0,Math.min(10,DEALS.length)).map((_,j)=>`<div class="dot ${j===i%10?'on':''}"></div>`).join('');
+}
+function loadFile(f){const rd=new FileReader();rd.onload=()=>{try{const deals=processCSV(rd.result);const stamp=new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});render(deals,stamp);$('drop').classList.remove('show');}catch(e){alert('Could not read that file: '+e.message);}};rd.readAsText(f);}
+$('file').addEventListener('change',e=>{if(e.target.files[0])loadFile(e.target.files[0]);});
+$('loadbtn').onclick=()=>$('file').click();$('pickbtn').onclick=()=>$('file').click();
+$('goalin').addEventListener('change',e=>{localStorage.setItem('vacGoal',e.target.value||70);if(DEALS.length)render(DEALS,localStorage.getItem('vacStamp'));});
+const dz=$('drop');['dragenter','dragover'].forEach(ev=>document.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('show','drag');}));
+['dragleave','drop'].forEach(ev=>document.addEventListener(ev,e=>{e.preventDefault();if(ev==='drop'){dz.classList.remove('drag');if(e.dataTransfer.files[0])loadFile(e.dataTransfer.files[0]);}else if(e.relatedTarget===null)dz.classList.remove('drag');}));
+async function load(){try{
+  const r=await fetch('/api/office-data');
+  if(r.status===401){location.reload();return;}
+  const j=await r.json();
+  render(j.deals||[], j.updatedAt?new Date(j.updatedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'');
+}catch(e){$('mlabel').textContent='Reconnecting…';}}
+load();setInterval(load,10*60*1000);
+setTimeout(()=>location.reload(),24*60*60*1000);
+function tick(){const n=new Date();$('clock').textContent=n.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})+'  ·  '+n.toLocaleDateString('en-US',{weekday:'long'});}
+tick();setInterval(tick,10000);
+</script></body></html>
