@@ -154,15 +154,29 @@ export default function Home() {
         return 0;
       }
     };
+    // Owner call: do NOT hide Pending Sale / recently Sold cars from this row —
+    // a SOLD or PENDING badge among the fresh arrivals is proof the lot moves.
+    // Sold cars follow the same 5-day window as the inventory page; the hero
+    // spotlight below still only features a car a shopper can actually buy.
+    const FIVE_DAYS = 5 * 24 * 60 * 60 * 1000;
+    const soldAtMs = (c: any) => {
+      try {
+        const d = c.soldAt?.toDate ? c.soldAt.toDate() : new Date(c.soldAt);
+        return isNaN(d.getTime()) ? 0 : d.getTime();
+      } catch (e) {
+        return 0;
+      }
+    };
     return inventory
-      .filter(c => c.status !== 'Sold' && c.status !== 'Pending Sale')
+      .filter(c => c.status !== 'Sold' || (soldAtMs(c) > 0 && Date.now() - soldAtMs(c) <= FIVE_DAYS))
       .sort((a, b) => ts(b) - ts(a))
       .slice(0, 8);
   }, [inventory]);
 
-  // Hero spotlight: the newest arrival WITH a showroom hero image. The old
+  // Hero spotlight: the newest AVAILABLE arrival with a showroom hero image —
+  // never a sold/pending car (the spotlight is a buy-me feature). The old
   // stock press photo (heroImageUrl) stays as fallback until inventory loads.
-  const heroCar = justLanded.find(c => c.images?.[0]) || null;
+  const heroCar = justLanded.find(c => c.images?.[0] && c.status !== 'Sold' && c.status !== 'Pending Sale') || null;
   const heroCarPrice = heroCar ? Number(heroCar.price) : 0;
   const heroCarTerm = heroCar && heroCarPrice > 0
     ? maxFinancingTerm(Number(heroCar.year), Number(heroCar.mileage))
