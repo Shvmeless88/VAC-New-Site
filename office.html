@@ -92,14 +92,15 @@ function processCSV(text){const rows=parseCSV(text);let h=0;for(let i=0;i<Math.m
 let DEALS=[],rot=null,idx=0;
 function render(deals,stamp){DEALS=deals;if(!deals.length){$('mlabel').textContent='No sales in file';return;}
   const units=deals.length;const pd=deals.filter(posted);const np=units-pd.length;
-  const gross=pd.reduce((a,d)=>a+d.gross,0);const avg=pd.length?gross/pd.length:0;
+  const PACK=1090; // lot pack per posted unit — real store gross the PBS deal-gross column leaves out
+  const gross=pd.reduce((a,d)=>a+d.gross,0)+PACK*pd.length;const avg=pd.length?gross/pd.length:0;
   const maxD=new Date(deals.map(d=>d.date).sort().slice(-1)[0]+'T00:00:00');
   const dim=new Date(maxD.getFullYear(),maxD.getMonth()+1,0).getDate(),el=maxD.getDate();
   const proj=Math.round(units/el*dim),goal=Number(localStorage.getItem('vacGoal')||65);$('goalin').value=goal;
   $('mlabel').textContent=maxD.toLocaleDateString('en-US',{month:'long',year:'numeric'}).toUpperCase()+' · through '+maxD.toLocaleDateString('en-US',{month:'short',day:'numeric'});
   $('k_units').textContent=units;$('k_units_s').textContent=(units/el).toFixed(1)+' / day';
   const per=Number(localStorage.getItem('vacPot')||50);$('k_pot').textContent=money(units*per);$('k_pot_s').textContent='$'+per+' × '+units+' deals';
-  $('k_gross').textContent=money(gross);$('k_gross_s').textContent=pd.length+' posted · '+np+' not posted yet';
+  $('k_gross').textContent=money(gross);$('k_gross_s').textContent=pd.length+' posted · '+np+' pending · incl $1,090/u pack';
   $('k_avg').textContent=money(avg);
   const projGross=Math.round(gross/el*dim);
   $('k_projg').textContent=money(projGross);
