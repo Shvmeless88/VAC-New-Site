@@ -101,10 +101,9 @@ function render(deals,stamp){DEALS=deals;if(!deals.length){$('mlabel').textConte
   const per=Number(localStorage.getItem('vacPot')||50);$('k_pot').textContent=money(units*per);$('k_pot_s').textContent='$'+per+' × '+units+' deals';
   $('k_gross').textContent=money(gross);$('k_gross_s').textContent=pd.length+' posted · '+np+' not posted yet';
   $('k_avg').textContent=money(avg);
-  const committed=deals.reduce((a,d)=>a+d.gross,0);
-  const projGross=Math.round(committed/el*dim);
+  const projGross=Math.round(gross/el*dim);
   $('k_projg').textContent=money(projGross);
-  $('k_projg_s').textContent=money(committed)+' signed thru day '+el+' of '+dim;
+  $('k_projg_s').textContent=money(gross)+' posted thru day '+el+' of '+dim;
   $('k_pace').textContent=proj+' proj.';$('k_pace_s').textContent='goal '+goal+' · '+(proj>=goal?'on track':(goal-proj)+' behind');$('k_pace_bar').style.width=Math.min(100,proj/goal*100)+'%';
   if(stamp)$('updated').textContent='Updated '+stamp;
   const lb={};for(const d of deals){const o=lb[d.rep]=lb[d.rep]||{u:0,g:0,p:0};o.u++;if(posted(d))o.g+=d.gross;else o.p++;}
