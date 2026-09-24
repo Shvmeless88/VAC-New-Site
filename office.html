@@ -11,7 +11,7 @@ header{display:flex;align-items:center;justify-content:space-between}
 .btn{background:var(--accent);color:#fff;border:none;border-radius:.7vh;padding:.9vh 1.2vw;font-size:1.5vh;font-weight:700;cursor:pointer}
 .goal{width:5vw;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:.6vh;padding:.7vh .6vw;font-size:1.5vh}
 .updated{font-size:1.3vh;color:var(--muted)}
-.kpis{display:grid;grid-template-columns:repeat(7,1fr);gap:1vw}
+.kpis{display:grid;grid-template-columns:repeat(8,1fr);gap:1vw}
 .kpi{background:var(--panel);border:1px solid var(--line);border-radius:1vh;padding:1.3vh 1.4vw}
 .kpi .l{font-size:1.4vh;color:var(--muted);text-transform:uppercase;letter-spacing:.12vw}
 .kpi .v{font-size:4vh;font-weight:800;margin-top:.3vh;font-variant-numeric:tabular-nums}
@@ -60,6 +60,7 @@ header{display:flex;align-items:center;justify-content:space-between}
  <div class="kpi gold"><div class="l">💰 Pot of Gold</div><div class="v" id="k_pot">—</div><div class="s" id="k_pot_s"></div></div>
  <div class="kpi"><div class="l">Gross MTD (posted)</div><div class="v" id="k_gross">—</div><div class="s amber" id="k_gross_s"></div></div>
  <div class="kpi"><div class="l">Avg Gross / Unit</div><div class="v" id="k_avg">—</div><div class="s">posted deals</div></div>
+ <div class="kpi"><div class="l">Proj. Gross</div><div class="v" id="k_projg">—</div><div class="s" id="k_projg_s"></div></div>
  <div class="kpi"><div class="l">Pace to Goal</div><div class="v" id="k_pace">—</div><div class="s" id="k_pace_s"></div><div class="pacebar"><span id="k_pace_bar"></span></div></div>
  <div class="kpi"><div class="l">&#128200; Ad Spend MTD</div><div class="v" id="k_spend">—</div><div class="s" id="k_spend_s"></div><div class="s" id="k_spend_s2"></div></div>
  <div class="kpi"><div class="l">&#127919; CPA</div><div class="v" id="k_cpa">—</div><div class="s" id="k_cpa_s"></div></div>
@@ -100,6 +101,10 @@ function render(deals,stamp){DEALS=deals;if(!deals.length){$('mlabel').textConte
   const per=Number(localStorage.getItem('vacPot')||50);$('k_pot').textContent=money(units*per);$('k_pot_s').textContent='$'+per+' × '+units+' deals';
   $('k_gross').textContent=money(gross);$('k_gross_s').textContent=pd.length+' posted · '+np+' not posted yet';
   $('k_avg').textContent=money(avg);
+  const committed=deals.reduce((a,d)=>a+d.gross,0);
+  const projGross=Math.round(committed/el*dim);
+  $('k_projg').textContent=money(projGross);
+  $('k_projg_s').textContent=money(committed)+' signed thru day '+el+' of '+dim;
   $('k_pace').textContent=proj+' proj.';$('k_pace_s').textContent='goal '+goal+' · '+(proj>=goal?'on track':(goal-proj)+' behind');$('k_pace_bar').style.width=Math.min(100,proj/goal*100)+'%';
   if(stamp)$('updated').textContent='Updated '+stamp;
   const lb={};for(const d of deals){const o=lb[d.rep]=lb[d.rep]||{u:0,g:0,p:0};o.u++;if(posted(d))o.g+=d.gross;else o.p++;}
