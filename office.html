@@ -24,9 +24,9 @@ header{display:flex;align-items:center;justify-content:space-between}
 .rcol{display:flex;flex-direction:column;gap:1.2vw;min-height:0}
 .rcol .card:first-child{flex:1.35;min-height:0}
 .dcard{flex:1;min-height:0;overflow:hidden;display:none}
-.dwrap{display:grid;grid-template-columns:1fr 1fr;gap:1.4vw;margin-top:.8vh}
-.dh{font-size:1.4vh;color:var(--muted);text-transform:uppercase;letter-spacing:.1vw;margin-bottom:.5vh}
-.drow{display:flex;justify-content:space-between;gap:.8vw;font-size:1.7vh;padding:.35vh 0;border-bottom:1px solid var(--line)}
+.dwrap{display:grid;grid-template-columns:1fr 1fr;gap:1.8vw;margin-top:1.2vh;flex:1;align-content:start}
+.dh{font-size:1.5vh;color:var(--muted);text-transform:uppercase;letter-spacing:.1vw;margin-bottom:.9vh}
+.drow{display:flex;justify-content:space-between;gap:.8vw;font-size:2vh;padding:.75vh 0;border-bottom:1px solid var(--line)}
 .drow b{font-variant-numeric:tabular-nums;white-space:nowrap}
 .drow.coldr span{color:var(--muted)}
 .dsub{color:var(--muted);font-weight:400;font-size:1.3vh}
@@ -73,7 +73,7 @@ header{display:flex;align-items:center;justify-content:space-between}
 <div class="kpis">
  <div class="kpi"><div class="l">Units MTD</div><div class="v" id="k_units">—</div><div class="s" id="k_units_s"></div></div>
  <div class="kpi"><div class="l">Gross MTD (posted)</div><div class="v" id="k_gross">—</div><div class="s amber" id="k_gross_s"></div></div>
- <div class="kpi"><div class="l">Avg Gross / Unit</div><div class="v" id="k_avg">—</div><div class="s">posted · incl $1,090 avg lot pack</div></div>
+ <div class="kpi"><div class="l">Avg Gross / Unit</div><div class="v" id="k_avg">—</div><div class="s">posted deals<br>incl $1,090/u lot pack</div></div>
  <div class="kpi"><div class="l">Proj. Gross</div><div class="v" id="k_projg">—</div><div class="s" id="k_projg_s"></div></div>
  <div class="kpi"><div class="l">Pace to Goal</div><div class="v" id="k_pace">—</div><div class="s" id="k_pace_s"></div><div class="pacebar"><span id="k_pace_bar"></span></div></div>
  <div class="kpi"><div class="l">&#128200; Ad Spend MTD</div><div class="v" id="k_spend">—</div><div class="s" id="k_spend_s"></div><div class="s" id="k_spend_s2"></div></div>
@@ -82,7 +82,7 @@ header{display:flex;align-items:center;justify-content:space-between}
 <div class="aistrip" id="aistrip"><span class="ail">&#129302; DAILY READ</span><span id="ai_txt"></span></div>
 <div class="main">
  <div class="card"><h2>Leaderboard — Units &amp; Gross (MTD)</h2><div class="lb" id="lb"></div>
-  <div class="dasof">Leads = rotation leads handed to the rep this month (their Chat pings). Worked = customers they opened a deal on — includes pool leads they pulled themselves and walk-ins, which is why Worked can be higher than Leads. % close = sold &divide; leads handed. For who converts the customers they actually engage, compare sold to Worked.</div></div>
+  <div class="dasof">Leads = rotation leads handed (Chat pings) &middot; Worked = deals opened, incl self-pulled pool leads &amp; walk-ins &middot; % close = sold &divide; leads. Fairest cross-rep read: sold &divide; worked.</div></div>
  <div class="card dcard" id="dcard"><h2>Website Demand · Last 7 Days</h2>
   <div class="dwrap">
    <div><div class="dh">&#128293; Most shopped (For Sale)</div><div id="d_hot"></div></div>
@@ -118,12 +118,12 @@ function render(deals,stamp){DEALS=deals;if(!deals.length){$('mlabel').textConte
   const proj=Math.round(units/el*dim),goal=Number(localStorage.getItem('vacGoal')||65);$('goalin').value=goal;
   $('mlabel').textContent=maxD.toLocaleDateString('en-US',{month:'long',year:'numeric'}).toUpperCase()+' · through '+maxD.toLocaleDateString('en-US',{month:'short',day:'numeric'});
   $('k_units').textContent=units;$('k_units_s').textContent=(units/el).toFixed(1)+' / day';
-  $('k_gross').textContent=money(gross);$('k_gross_s').textContent=pd.length+' posted · '+np+' pending · incl $1,090/u pack';
+  $('k_gross').textContent=money(gross);$('k_gross_s').innerHTML=pd.length+' posted · '+np+' pending<br>incl $1,090/u lot pack';
   $('k_avg').textContent=money(avg);
   const projGross=Math.round(avg*proj);
   $('k_projg').textContent=money(projGross);
   $('k_projg_s').textContent=money(avg)+'/u × '+proj+' proj units';
-  $('k_pace').textContent=proj+' proj.';$('k_pace_s').textContent='goal '+goal+' · '+(proj>=goal?'on track':(goal-proj)+' behind');$('k_pace_bar').style.width=Math.min(100,proj/goal*100)+'%';
+  $('k_pace').textContent=proj;$('k_pace_s').textContent='projected · goal '+goal+' · '+(proj>=goal?'on track':(goal-proj)+' behind');$('k_pace_bar').style.width=Math.min(100,proj/goal*100)+'%';
   if(stamp)$('updated').textContent='Updated '+stamp;
   const lb={};for(const d of deals){const o=lb[d.rep]=lb[d.rep]||{u:0,g:0,p:0};o.u++;if(posted(d))o.g+=d.gross;else o.p++;}
   const rk=Object.entries(lb).map(([n,v])=>({n,...v})).sort((a,b)=>b.u-a.u||b.g-a.g);const mx=Math.max(...rk.map(r=>r.u));
@@ -144,7 +144,8 @@ async function load(){try{
   REPLEADS=j.repLeads||null;REPDEALS=j.repDeals||null;
   render(j.deals||[], j.updatedAt?new Date(j.updatedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'');
   if(j.adSpend&&j.adSpend.total){const a=j.adSpend;$('k_spend').textContent=money(a.total);
-    $('k_spend_s').textContent='G '+money(a.google||0)+' · M '+money(a.facebook||0)+' · T '+money(a.tiktok||0);
+    const k=n=>'$'+(n>=1000?(n/1000).toFixed(1)+'k':Math.round(n));
+    $('k_spend_s').textContent='G '+k(a.google||0)+' · M '+k(a.facebook||0)+' · T '+k(a.tiktok||0);
     $('k_spend_s2').textContent=a.asOf?('through '+a.asOf.slice(5).replace('-','/')):'';
     const u=(j.deals||[]).length;
     $('k_cpa').textContent=u?money(a.total/u):'—';
