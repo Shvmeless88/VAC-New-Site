@@ -31,6 +31,7 @@ header{display:flex;align-items:center;justify-content:space-between}
 .drow.coldr span{color:var(--muted)}
 .dsub{color:var(--muted);font-weight:400;font-size:1.3vh}
 .dasof{font-size:1.2vh;color:var(--muted);margin-top:.6vh}
+.leadsline{color:var(--muted);font-size:1.25vh}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:1.2vh;padding:1.3vh 1.4vw;display:flex;flex-direction:column;min-height:0}
 .card h2{font-size:1.7vh;letter-spacing:.14vw;text-transform:uppercase;color:var(--muted);margin-bottom:1vh}
 .lb{flex:1;display:flex;flex-direction:column;gap:.55vh;overflow:hidden}
@@ -108,7 +109,7 @@ function processCSV(text){const rows=parseCSV(text);let h=0;for(let i=0;i<Math.m
   const months=[...new Set(all.map(d=>d.ym))].sort();const cur=months[months.length-1];
   return all.filter(d=>d.ym===cur).sort((a,b)=>a.date<b.date?1:-1);
 }
-let DEALS=[],rot=null,idx=0;
+let DEALS=[],rot=null,idx=0,REPLEADS=null;
 function render(deals,stamp){DEALS=deals;if(!deals.length){$('mlabel').textContent='No sales in file';return;}
   const units=deals.length;const pd=deals.filter(posted);const np=units-pd.length;
   const PACK=1090; // lot pack per posted unit — real store gross the PBS deal-gross column leaves out
@@ -128,7 +129,8 @@ function render(deals,stamp){DEALS=deals;if(!deals.length){$('mlabel').textConte
   if(stamp)$('updated').textContent='Updated '+stamp;
   const lb={};for(const d of deals){const o=lb[d.rep]=lb[d.rep]||{u:0,g:0,p:0};o.u++;if(posted(d))o.g+=d.gross;else o.p++;}
   const rk=Object.entries(lb).map(([n,v])=>({n,...v})).sort((a,b)=>b.u-a.u||b.g-a.g);const mx=Math.max(...rk.map(r=>r.u));
-  $('lb').innerHTML=rk.map((r,i)=>`<div class="row ${i===0?'top':''}"><div class="rank">${i+1}</div><div><div class="nm">${r.n}</div><div class="barwrap"><span style="width:${r.u/mx*100}%"></span></div></div><div class="stat"><div class="u">${r.u}</div><div class="g">${money(r.g)}${r.p?' <span class="pend">+'+r.p+' pend</span>':''}</div></div></div>`).join('');
+  const rl=n=>{const c=REPLEADS&&+REPLEADS[n];if(!c)return '';const row=rk.find(x=>x.n===n);const pct=Math.round(row.u/c*100);return `<div class="g leadsline">${c} leads · ${pct}% close</div>`;};
+  $('lb').innerHTML=rk.map((r,i)=>`<div class="row ${i===0?'top':''}"><div class="rank">${i+1}</div><div><div class="nm">${r.n}</div><div class="barwrap"><span style="width:${r.u/mx*100}%"></span></div></div><div class="stat"><div class="u">${r.u}</div><div class="g">${money(r.g)}${r.p?' <span class="pend">+'+r.p+' pend</span>':''}</div>${rl(r.n)}</div></div>`).join('');
   idx=0;showDeal(0);if(rot)clearInterval(rot);rot=setInterval(()=>{idx=(idx+1)%Math.min(DEALS.length,10);showDeal(idx);},6000);
 }
 function showDeal(i){const d=DEALS[i];if(!d)return;const isP=posted(d);
@@ -152,6 +154,7 @@ async function load(){try{
   const r=await fetch('/api/office-data');
   if(r.status===401){location.reload();return;}
   const j=await r.json();
+  REPLEADS=j.repLeads||null;
   render(j.deals||[], j.updatedAt?new Date(j.updatedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'');
   if(j.adSpend&&j.adSpend.total){const a=j.adSpend;$('k_spend').textContent=money(a.total);
     $('k_spend_s').textContent='G '+money(a.google||0)+' · M '+money(a.facebook||0)+' · T '+money(a.tiktok||0);
