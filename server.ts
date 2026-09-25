@@ -2313,6 +2313,32 @@ async function startServer() {
         }
       } catch (e: any) { console.error("[CRM-TICK] email import phase failed:", e?.message || e); }
 
+      // 4) Lead-assignment roster: record each new Pipedrive lead's FIRST rep owner.
+      //    Dead leads later bounce back to the house account, which erases who worked
+      //    them — this roster is what makes per-rep "leads received" (and closing
+      //    ratio on the office board) match the Google Chat assignment pings.
+      out.rosterAdded = 0;
+      try {
+        const pdTok = process.env.PIPEDRIVE_API_TOKEN || "";
+        const HOUSE_OWNER = 8169540;
+        if (pdTok) {
+          const cutoff = new Date(now.getTime() - 30 * 60 * 1000).toISOString().slice(0, 19);
+          const pr = await fetch(`https://api.pipedrive.com/v1/leads?limit=100&sort=add_time%20DESC&api_token=${pdTok}`);
+          const pj: any = await pr.json();
+          for (const l of pj?.data || []) {
+            if (String(l.add_time || "") < cutoff) break;
+            const ownerId = Number(l.owner_id || 0);
+            if (!ownerId || ownerId === HOUSE_OWNER) continue; // not routed to a rep yet
+            const ref = db.collection("leadAssignRoster").doc(String(l.id));
+            const seen = await ref.get();
+            if (!seen.exists) {
+              await ref.set({ ownerId, addTime: l.add_time, title: l.title || "", recordedAt: nowIso });
+              out.rosterAdded++;
+            }
+          }
+        }
+      } catch (e: any) { console.error("[CRM-TICK] lead roster phase failed:", e?.message || e); }
+
       res.json({ ok: true, at: nowIso, ...out });
     } catch (err: any) {
       console.error("[CRM-TICK] error:", err?.message || err);
@@ -5964,7 +5990,7 @@ if(r.ok)location.reload();else{if(p.value.length>=5){e.textContent='Wrong PIN';p
           const { db } = await getFirestoreAdmin();
           const snap = await db.collection("config").doc(configDoc).get();
           const d = snap.exists ? snap.data() : {};
-          res.json({ deals: d?.deals || [], updatedAt: d?.updatedAt || null, adSpend: d?.adSpend || null, demand: d?.demand || null, repLeads: d?.repLeads || null });
+          res.json({ deals: d?.deals || [], updatedAt: d?.updatedAt || null, adSpend: d?.adSpend || null, demand: d?.demand || null, repLeads: d?.repLeads || null, repDeals: d?.repDeals || null });
         } catch (e: any) {
           console.error(`[BOARD:${configDoc}]`, e?.message);
           res.status(500).json({ error: "data unavailable" });
