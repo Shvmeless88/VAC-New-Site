@@ -77,12 +77,14 @@ def imap(d, extra=None):
     return {"mapValue": {"fields": fields}}
 
 today = datetime.date.today().isoformat()
-body = {"fields": {
-    "repDeals": imap(rep_deals, {"asOf": {"stringValue": today}}),
-    "repLeads": imap(rep_leads, {"asOf": {"stringValue": today}}),
-}}
-url = BASE + "/config/office?updateMask.fieldPaths=repDeals&updateMask.fieldPaths=repLeads"
-get(url, "PATCH", body, TOKEN)
+body = {"fields": {"repDeals": imap(rep_deals, {"asOf": {"stringValue": today}})}}
+mask = "updateMask.fieldPaths=repDeals"
+if covers_month:
+    # Only replace repLeads when the roster covers the whole month — otherwise
+    # keep whatever is there (e.g. the Sep 2026 Google Chat backfill).
+    body["fields"]["repLeads"] = imap(rep_leads, {"asOf": {"stringValue": today}})
+    mask += "&updateMask.fieldPaths=repLeads"
+get(BASE + "/config/office?" + mask, "PATCH", body, TOKEN)
 print("repDeals:", dict(sorted(rep_deals.items(), key=lambda x: -x[1])))
 print("repLeads (roster):", dict(sorted(rep_leads.items(), key=lambda x: -x[1])) if rep_leads
       else f"not written — roster coverage starts {earliest or 'n/a'} (full from next month)")
