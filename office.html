@@ -32,6 +32,10 @@ header{display:flex;align-items:center;justify-content:space-between}
 .dsub{color:var(--muted);font-weight:400;font-size:1.3vh}
 .dasof{font-size:1.2vh;color:var(--muted);margin-top:.6vh}
 .leadsline{color:var(--muted);font-size:1.25vh}
+.aistrip{display:none;background:var(--panel);border:1px solid var(--line);border-radius:1vh;padding:1vh 1.4vw;font-size:1.7vh;line-height:1.5}
+.aistrip .ail{color:var(--gold);font-size:1.3vh;letter-spacing:.12vw;margin-right:1vw;white-space:nowrap}
+.aistrip .aib{margin-right:1.6vw}
+.aistrip .aib b{color:var(--gold)}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:1.2vh;padding:1.3vh 1.4vw;display:flex;flex-direction:column;min-height:0}
 .card h2{font-size:1.7vh;letter-spacing:.14vw;text-transform:uppercase;color:var(--muted);margin-bottom:1vh}
 .lb{flex:1;display:flex;flex-direction:column;gap:.55vh;overflow:hidden}
@@ -76,6 +80,7 @@ header{display:flex;align-items:center;justify-content:space-between}
  <div class="kpi"><div class="l">&#128200; Ad Spend MTD</div><div class="v" id="k_spend">—</div><div class="s" id="k_spend_s"></div><div class="s" id="k_spend_s2"></div></div>
  <div class="kpi"><div class="l">&#127919; CPA</div><div class="v" id="k_cpa">—</div><div class="s" id="k_cpa_s"></div></div>
 </div>
+<div class="aistrip" id="aistrip"><span class="ail">&#129302; DAILY READ</span><span id="ai_txt"></span></div>
 <div class="main">
  <div class="card"><h2>Leaderboard — Units &amp; Gross (MTD)</h2><div class="lb" id="lb"></div>
   <div class="dasof">Leads = rotation leads handed to the rep this month (their Chat pings). Worked = customers they opened a deal on — includes pool leads they pulled themselves and walk-ins, which is why Worked can be higher than Leads. % close = sold &divide; leads handed. For who converts the customers they actually engage, compare sold to Worked.</div></div>
@@ -164,6 +169,8 @@ async function load(){try{
     const u=(j.deals||[]).length;
     $('k_cpa').textContent=u?money(a.total/u):'—';
     $('k_cpa_s').textContent=u?(money(a.total)+' ÷ '+u+' units'):'';}
+  if(j.aiSummary&&(j.aiSummary.bullets||[]).length){const s=j.aiSummary;$('aistrip').style.display='block';
+    $('ai_txt').innerHTML=s.bullets.map(b=>`<span class="aib">&bull; ${b}</span>`).join('')+(s.asOf?` <span class="dsub">(${s.asOf})</span>`:'');}
   if(j.demand){const d=j.demand;$('dcard').style.display='block';
     $('d_hot').innerHTML=(d.hot||[]).map(h=>`<div class="drow"><span>${h.name}</span><b>${h.users} <span class="dsub">shoppers</span></b></div>`).join('');
     $('d_cold').innerHTML=(d.cold||[]).slice(0,4).map(n=>`<div class="drow coldr"><span>${n}</span></div>`).join('')||'<div class="drow coldr"><span>none</span></div>';

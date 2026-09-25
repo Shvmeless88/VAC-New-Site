@@ -5990,7 +5990,7 @@ if(r.ok)location.reload();else{if(p.value.length>=5){e.textContent='Wrong PIN';p
           const { db } = await getFirestoreAdmin();
           const snap = await db.collection("config").doc(configDoc).get();
           const d = snap.exists ? snap.data() : {};
-          res.json({ deals: d?.deals || [], updatedAt: d?.updatedAt || null, adSpend: d?.adSpend || null, demand: d?.demand || null, repLeads: d?.repLeads || null, repDeals: d?.repDeals || null });
+          res.json({ deals: d?.deals || [], updatedAt: d?.updatedAt || null, adSpend: d?.adSpend || null, demand: d?.demand || null, repLeads: d?.repLeads || null, repDeals: d?.repDeals || null, aiSummary: d?.aiSummary || null });
         } catch (e: any) {
           console.error(`[BOARD:${configDoc}]`, e?.message);
           res.status(500).json({ error: "data unavailable" });
