@@ -11,7 +11,7 @@ header{display:flex;align-items:center;justify-content:space-between}
 .btn{background:var(--accent);color:#fff;border:none;border-radius:.7vh;padding:.9vh 1.2vw;font-size:1.5vh;font-weight:700;cursor:pointer}
 .goal{width:5vw;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:.6vh;padding:.7vh .6vw;font-size:1.5vh}
 .updated{font-size:1.3vh;color:var(--muted)}
-.kpis{display:grid;grid-template-columns:repeat(7,1fr);gap:1vw}
+.kpis{display:grid;grid-template-columns:repeat(8,1fr);gap:1vw}
 .kpi{background:var(--panel);border:1px solid var(--line);border-radius:1vh;padding:1.3vh 1.4vw}
 .kpi .l{font-size:1.4vh;color:var(--muted);text-transform:uppercase;letter-spacing:.12vw}
 .kpi .v{font-size:4vh;font-weight:800;margin-top:.3vh;font-variant-numeric:tabular-nums}
@@ -24,9 +24,9 @@ header{display:flex;align-items:center;justify-content:space-between}
 .rcol{display:flex;flex-direction:column;gap:1.2vw;min-height:0}
 .rcol .card:first-child{flex:1.35;min-height:0}
 .dcard{flex:1;min-height:0;overflow:hidden;display:none}
-.dwrap{display:grid;grid-template-columns:1fr 1fr;gap:1.8vw;margin-top:1.2vh;flex:1;align-content:start}
-.dh{font-size:1.5vh;color:var(--muted);text-transform:uppercase;letter-spacing:.1vw;margin-bottom:.9vh}
-.drow{display:flex;justify-content:space-between;gap:.8vw;font-size:2vh;padding:.75vh 0;border-bottom:1px solid var(--line)}
+.dwrap{display:grid;grid-template-columns:1fr 1fr;gap:1.4vw;margin-top:.8vh}
+.dh{font-size:1.4vh;color:var(--muted);text-transform:uppercase;letter-spacing:.1vw;margin-bottom:.5vh}
+.drow{display:flex;justify-content:space-between;gap:.8vw;font-size:1.7vh;padding:.35vh 0;border-bottom:1px solid var(--line)}
 .drow b{font-variant-numeric:tabular-nums;white-space:nowrap}
 .drow.coldr span{color:var(--muted)}
 .dsub{color:var(--muted);font-weight:400;font-size:1.3vh}
@@ -72,6 +72,7 @@ header{display:flex;align-items:center;justify-content:space-between}
 </header>
 <div class="kpis">
  <div class="kpi"><div class="l">Units MTD</div><div class="v" id="k_units">—</div><div class="s" id="k_units_s"></div></div>
+ <div class="kpi gold"><div class="l">💰 Pot of Gold</div><div class="v" id="k_pot">—</div><div class="s" id="k_pot_s"></div></div>
  <div class="kpi"><div class="l">Gross MTD (posted)</div><div class="v" id="k_gross">—</div><div class="s amber" id="k_gross_s"></div></div>
  <div class="kpi"><div class="l">Avg Gross / Unit</div><div class="v" id="k_avg">—</div><div class="s">posted deals<br>incl $1,090/u lot pack</div></div>
  <div class="kpi"><div class="l">Proj. Gross</div><div class="v" id="k_projg">—</div><div class="s" id="k_projg_s"></div></div>
@@ -83,12 +84,18 @@ header{display:flex;align-items:center;justify-content:space-between}
 <div class="main">
  <div class="card"><h2>Leaderboard — Units &amp; Gross (MTD)</h2><div class="lb" id="lb"></div>
   <div class="dasof">Leads = rotation leads handed (Chat pings) &middot; Worked = deals opened, incl self-pulled pool leads &amp; walk-ins &middot; % close = sold &divide; leads. Fairest cross-rep read: sold &divide; worked.</div></div>
+ <div class="rcol">
+ <div class="card"><h2>Just Sold</h2><div class="feature">
+   <div class="photo" id="photo"><div class="badge" id="badge">SOLD</div><div class="soldby"><div><div class="sbl">Sold by</div><div class="sbn" id="f_rep"></div><div class="veh" id="f_veh"></div></div><div class="gross" id="f_gross"></div></div></div>
+   <div class="dots" id="dots"></div>
+ </div></div>
  <div class="card dcard" id="dcard"><h2>Website Demand · Last 7 Days</h2>
   <div class="dwrap">
    <div><div class="dh">&#128293; Most shopped (For Sale)</div><div id="d_hot"></div></div>
    <div><div class="dh">&#129482; Cold &middot; &le;2 shoppers</div><div id="d_cold"></div>
      <div class="dh" style="margin-top:1.2vh">Shoppers want &middot; vs lot</div><div id="d_mix"></div></div>
   </div><div class="dasof">Shoppers = people who viewed that vehicle's page on our website (last 7 days). Want = what this week's credit applicants said they're shopping for on the application. Lot = our current For Sale mix.</div><div class="dasof" id="d_asof"></div>
+ </div>
  </div>
 </div>
 </div>
@@ -118,6 +125,7 @@ function render(deals,stamp){DEALS=deals;if(!deals.length){$('mlabel').textConte
   const proj=Math.round(units/el*dim),goal=Number(localStorage.getItem('vacGoal')||65);$('goalin').value=goal;
   $('mlabel').textContent=maxD.toLocaleDateString('en-US',{month:'long',year:'numeric'}).toUpperCase()+' · through '+maxD.toLocaleDateString('en-US',{month:'short',day:'numeric'});
   $('k_units').textContent=units;$('k_units_s').textContent=(units/el).toFixed(1)+' / day';
+  const per=Number(localStorage.getItem('vacPot')||50);$('k_pot').textContent=money(units*per);$('k_pot_s').textContent='$'+per+' × '+units+' deals';
   $('k_gross').textContent=money(gross);$('k_gross_s').innerHTML=pd.length+' posted · '+np+' pending<br>incl $1,090/u lot pack';
   $('k_avg').textContent=money(avg);
   const projGross=Math.round(avg*proj);
@@ -130,6 +138,18 @@ function render(deals,stamp){DEALS=deals;if(!deals.length){$('mlabel').textConte
   const rl=n=>{const L=(REPLEADS&&+REPLEADS[n])||0,D=(REPDEALS&&+REPDEALS[n])||0;if(!L&&!D)return '';const row=rk.find(x=>x.n===n);const den=L||D;const pct=Math.round(row.u/den*100);
     return `<div class="g leadsline">${L?L+' leads · ':''}${D?D+' worked · ':''}${pct}% close</div>`;};
   $('lb').innerHTML=rk.map((r,i)=>`<div class="row ${i===0?'top':''}"><div class="rank">${i+1}</div><div><div class="nm">${r.n}</div><div class="barwrap"><span style="width:${r.u/mx*100}%"></span></div></div><div class="stat"><div class="u">${r.u}</div><div class="g">${money(r.g)}${r.p?' <span class="pend">+'+r.p+' pend</span>':''}</div>${rl(r.n)}</div></div>`).join('');
+  idx=0;showDeal(0);if(rot)clearInterval(rot);rot=setInterval(()=>{idx=(idx+1)%Math.min(DEALS.length,10);showDeal(idx);},6000);
+}
+function showDeal(i){const d=DEALS[i];if(!d)return;const isP=posted(d);
+  $('f_rep').textContent=d.rep;
+  $('f_veh').textContent=(d.ymm+(d.trim?' '+d.trim:''))+'  ·  '+new Date(d.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  const fg=$('f_gross'),bg=$('badge');
+  if(isP){fg.className='gross';fg.textContent=money(d.gross);bg.className='badge';bg.textContent='POSTED';}
+  else{fg.className='gross prov';fg.innerHTML='PROVISIONAL<small>not posted yet</small>';bg.className='badge prov';bg.textContent='SOLD · PENDING';}
+  const ph=$('photo');[...ph.querySelectorAll('.noimg')].forEach(e=>e.remove());ph.style.backgroundImage='none';
+  const fb=()=>{ph.style.backgroundImage='none';ph.insertAdjacentHTML('afterbegin','<div class="noimg">'+d.ymm+'</div>');};
+  if(d.vin){const u=[FB+d.vin+'%2Fstudio-0.jpg?alt=media',FB+d.vin+'%2Fstudio-1.jpg?alt=media'];let t=0;const im=new Image();im.onload=()=>ph.style.backgroundImage=`url("${im.src}")`;im.onerror=()=>{if(t<u.length-1){t++;im.src=u[t];}else fb();};im.src=u[0];}else fb();
+  $('dots').innerHTML=DEALS.slice(0,Math.min(10,DEALS.length)).map((_,j)=>`<div class="dot ${j===i%10?'on':''}"></div>`).join('');
 }
 function loadFile(f){const rd=new FileReader();rd.onload=()=>{try{const deals=processCSV(rd.result);const stamp=new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});render(deals,stamp);$('drop').classList.remove('show');}catch(e){alert('Could not read that file: '+e.message);}};rd.readAsText(f);}
 $('file').addEventListener('change',e=>{if(e.target.files[0])loadFile(e.target.files[0]);});
@@ -154,12 +174,12 @@ async function load(){try{
     $('ai_txt').innerHTML=s.bullets.map(b=>`<span class="aib">&bull; ${b}</span>`).join('')+(s.asOf?` <span class="dsub">(${s.asOf})</span>`:'');}
   if(j.demand){const d=j.demand;$('dcard').style.display='block';
     $('d_hot').innerHTML=(d.hot||[]).map(h=>`<div class="drow"><span>${h.name}</span><b>${h.users} <span class="dsub">shoppers</span></b></div>`).join('');
-    $('d_cold').innerHTML=(d.cold||[]).slice(0,8).map(n=>`<div class="drow coldr"><span>${n}</span></div>`).join('')||'<div class="drow coldr"><span>none</span></div>';
+    $('d_cold').innerHTML=(d.cold||[]).slice(0,4).map(n=>`<div class="drow coldr"><span>${n}</span></div>`).join('')||'<div class="drow coldr"><span>none</span></div>';
     const w=d.want||{},hv=d.have||{};const tw=Object.values(w).reduce((a,b)=>a+ +b,0)||1;const th=Object.values(hv).reduce((a,b)=>a+ +b,0)||1;
     $('d_mix').innerHTML=['SUV','Sedan','Truck','Minivan'].filter(k=>w[k]||hv[k]).map(k=>{
       const wp=Math.round((+w[k]||0)/tw*100),hp=Math.round((+hv[k]||0)/th*100);
       return `<div class="drow"><span>${k}</span><b>${wp}% <span class="dsub">want</span> · ${hp}% <span class="dsub">lot</span>${wp-hp>=10?' &#9888;&#65039;':''}</b></div>`}).join('');
-    $('d_asof').textContent=(d.coldCount>8?`+${d.coldCount-8} more cold · `:'')+'GA + applications · through '+(d.asOf||'');}
+    $('d_asof').textContent=(d.coldCount>4?`+${d.coldCount-4} more cold · `:'')+'GA + applications · through '+(d.asOf||'');}
 }catch(e){$('mlabel').textContent='Reconnecting…';}}
 load();setInterval(load,10*60*1000);
 setTimeout(()=>location.reload(),24*60*60*1000);
