@@ -80,7 +80,10 @@ for d in deals:
 
 # ---- 4. board docs ----
 def deal_value(d, with_gross):
-    f = {k: {"stringValue": d[k]} for k in ("date", "stock", "vin", "status", "rep", "ymm", "trim")}
+    f = {k: {"stringValue": d[k]} for k in ("date", "stock", "status", "rep", "ymm", "trim")}
+    # storage paths (inventory-imports/<vin>/studio-0.jpg) are lowercase — the
+    # boards build photo URLs from this field, so it must match case.
+    f["vin"] = {"stringValue": d["vin"].lower()}
     if with_gross: f["gross"] = {"integerValue": str(d["gross"])}
     return {"mapValue": {"fields": f}}
 
