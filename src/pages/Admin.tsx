@@ -272,6 +272,33 @@ export default function Admin() {
     clientSecret: (localStorage.getItem('sirv_client_secret') || '').trim() || (import.meta.env.VITE_SIRV_CLIENT_SECRET || '').trim() || 'PTCHFIo0SuujGhGElWVQj0jcQG0d9YRaOJ2P0apWjLX+qLl2NBSkAtmjOT+yZKcR4xAsZSBcrP5R7LBwAInBcg=='
   });
   const [isFetchingSirv, setIsFetchingSirv] = useState(false);
+  // Trade-in photo upload: raw customer photos go to storage, then the branded
+  // showroom pipeline generates the hero on save.
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const [brandPhotos, setBrandPhotos] = useState(false);
+  const uploadTradeInPhotos = async (files: FileList | null) => {
+    if (!files || !files.length) return;
+    setUploadingPhotos(true);
+    const toastId = toast.loading(`Uploading ${files.length} photo${files.length === 1 ? '' : 's'}…`);
+    try {
+      const { auth } = await import('@/lib/firebase');
+      const token = (await auth.currentUser?.getIdToken()) || '';
+      const fd = new FormData();
+      Array.from(files).forEach((f) => fd.append('photos', f));
+      const res = await fetch('/api/inventory/upload-photos', {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+      });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || 'Upload failed.');
+      setNewVehicle((v) => ({ ...v, images: [...(v.images || []), ...j.urls] }));
+      setBrandPhotos(true);
+      toast.success(`${j.urls.length} photo${j.urls.length === 1 ? '' : 's'} added — save to build the branded listing.`, { id: toastId });
+    } catch (e: any) {
+      toast.error(`Upload failed: ${e.message}`, { id: toastId });
+    } finally {
+      setUploadingPhotos(false);
+    }
+  };
   const [isSyncingAll, setIsSyncingAll] = useState(false);
   const [isUnsyncingAll, setIsUnsyncingAll] = useState(false);
 
@@ -1572,10 +1599,56 @@ export default function Admin() {
     }
   };
 
+  const blankNewVehicle: Partial<Car> = {
+    make: '', model: '', trim: '', year: new Date().getFullYear(), price: 0, mileage: 0,
+    bodyStyle: 'Sedan', transmission: 'Automatic', fuelType: 'Gasoline',
+    exteriorColor: '', interiorColor: '', images: [''], features: [], description: '',
+    isFeatured: false, isClearance: false, vin: '',
+  };
+
   const handleAddVehicle = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    
+
+    // Trade-in / raw-photo path: run the branded showroom pipeline (studio hero,
+    // description, market pricing, re-host) instead of a plain doc write.
+    if (brandPhotos && (newVehicle.images?.length || 0) > 0) {
+      if (!newVehicle.year || !newVehicle.make || !newVehicle.model) {
+        setError('Year, make and model are required.');
+        return;
+      }
+      const toastId = toast.loading('Building branded listing — generating showroom photo (this can take a minute)…');
+      try {
+        const { auth } = await import('@/lib/firebase');
+        const token = (await auth.currentUser?.getIdToken()) || '';
+        const res = await fetch('/api/inventory/import-auction', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            manual: true,
+            vin: newVehicle.vin || '', year: newVehicle.year, make: newVehicle.make,
+            model: newVehicle.model, trim: newVehicle.trim || '', mileage: newVehicle.mileage || '',
+            price: newVehicle.price || 0, bodyStyle: newVehicle.bodyStyle || '',
+            transmission: newVehicle.transmission || '', fuelType: newVehicle.fuelType || '',
+            drivetrain: newVehicle.drivetrain || '', engine: newVehicle.engine || '',
+            exteriorColor: newVehicle.exteriorColor || '', interiorColor: newVehicle.interiorColor || '',
+            status: newVehicle.status || 'For Sale', features: newVehicle.features || [],
+            photoUrls: (newVehicle.images || []).filter(Boolean),
+          }),
+        });
+        const j = await res.json();
+        if (!res.ok || !j.ok) throw new Error(j.error || 'Failed to create listing.');
+        toast.success(`${j.title} listed with ${j.photos} photo${j.photos === 1 ? '' : 's'}${j.autoPriced ? ` (auto-priced $${(j.price || 0).toLocaleString()})` : ''} — showroom hero generated.`, { id: toastId, duration: 9000 });
+        setIsAddVehicleOpen(false);
+        setBrandPhotos(false);
+        setNewVehicle(blankNewVehicle);
+        triggerSync();
+      } catch (err: any) {
+        toast.error(`Could not create listing: ${err.message}`, { id: toastId, duration: 8000 });
+        setError(err.message);
+      }
+      return;
+    }
+
     if (!newVehicle.vin) {
       setError('VIN is required');
       return;
@@ -2902,9 +2975,28 @@ export default function Admin() {
                         </div>
 
                         <div className="space-y-2">
+                          <Label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Trade-in photos (upload the customer's pics)</Label>
+                          <label className={`flex flex-col items-center justify-center gap-2 w-full rounded-2xl border-2 border-dashed p-6 cursor-pointer transition-colors ${uploadingPhotos ? 'border-brand-primary/40 bg-brand-accent/5' : 'border-gray-200 hover:border-brand-primary/50 hover:bg-gray-50'}`}>
+                            <input type="file" accept="image/*" multiple className="hidden" disabled={uploadingPhotos}
+                              onChange={(e) => { uploadTradeInPhotos(e.target.files); e.currentTarget.value = ''; }} />
+                            {uploadingPhotos ? (
+                              <><Loader2 className="h-5 w-5 animate-spin text-brand-primary" /><span className="text-xs font-semibold text-gray-500">Uploading…</span></>
+                            ) : (
+                              <><RotateCw className="h-5 w-5 text-brand-primary" /><span className="text-sm font-bold text-gray-600">Click to upload photos</span><span className="text-[11px] text-gray-400">We'll build the branded showroom photo automatically</span></>
+                            )}
+                          </label>
+                          {brandPhotos && (newVehicle.images?.length || 0) > 0 && (
+                            <div className="flex items-center gap-2 text-[11px] font-semibold text-emerald-600">
+                              <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                              {newVehicle.images!.length} photo{newVehicle.images!.length === 1 ? '' : 's'} ready — showroom hero generates on save
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
                           <div className="flex justify-between items-center mb-1">
                             <Label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Image URLs (one per line)</Label>
-                            <Button 
+                            <Button
                               type="button"
                               variant="ghost"
                               size="sm"

@@ -5112,7 +5112,11 @@ async function startServer() {
       const price = Number(req.body?.price) || 0;
       const status = String(req.body?.status || "For Sale");
       const dryRun = req.body?.dryRun === true;
-      if (!url) return res.status(400).json({ error: "Pass url." });
+      // Manual path (trade-ins / any car with no auction cut-sheet): the admin
+      // supplies the details + uploaded photo URLs directly, and the exact same
+      // pipeline below (dedupe → re-host → studio hero → description → doc) runs.
+      const manual = req.body?.manual === true || (!url && Array.isArray(req.body?.photoUrls));
+      if (!url && !manual) return res.status(400).json({ error: "Pass url." });
       const { admin, db } = await getFirestoreAdmin();
 
       const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
@@ -5192,6 +5196,29 @@ async function startServer() {
               if (m2) { car.vin = m2[0]; console.log(`[AUCTION-IMPORT] VIN read from sticker photo: ${car.vin}`); }
             }
           } catch (ve) { console.error("[AUCTION-IMPORT] VIN OCR skipped:", (ve as any)?.message); }
+        }
+      } else if (manual) {
+        car.source = "manual";
+        car.vin = String(req.body?.vin || "").trim().toUpperCase() || null;
+        car.year = Number(req.body?.year) || null;
+        car.make = String(req.body?.make || "").trim();
+        car.model = String(req.body?.model || "").trim();
+        car.trim = String(req.body?.trim || "").trim();
+        car.mileage = Number(String(req.body?.mileage ?? "").replace(/[^\d]/g, "")) || null;
+        car.bodyStyle = String(req.body?.bodyStyle || "").trim();
+        car.transmission = String(req.body?.transmission || "").trim();
+        car.fuelType = String(req.body?.fuelType || "").trim();
+        car.drivetrain = String(req.body?.drivetrain || "").trim();
+        car.engine = String(req.body?.engine || "").trim();
+        car.exteriorColor = String(req.body?.exteriorColor || "").trim();
+        car.interiorColor = String(req.body?.interiorColor || "").trim();
+        car.features = Array.isArray(req.body?.features) ? req.body.features.filter((x: any) => typeof x === "string").slice(0, 40) : [];
+        car.photoUrls = (Array.isArray(req.body?.photoUrls) ? req.body.photoUrls : []).filter((u: any) => typeof u === "string" && /^https?:\/\//.test(u));
+        if (!car.year || !car.make || !car.model) {
+          return res.status(400).json({ error: "Year, make and model are required." });
+        }
+        if (!car.photoUrls.length) {
+          return res.status(400).json({ error: "Add at least one photo." });
         }
       } else {
         return res.status(400).json({ error: "Unrecognized link. Paste an eBlock share link (graph.eblock.com/share/…) or an OpenLane public vehicle link (app.openlane.ca/vdp/retail/public/…)." });
@@ -5597,7 +5624,7 @@ async function startServer() {
         exteriorColor: car.exteriorColor || "", interiorColor: car.interiorColor || "",
         images, auctionImages: (car as any).auctionImages || null, features: car.features,
         description: aiDescription || `Newly arrived: ${title}${car.mileage ? ` with ${Number(car.mileage).toLocaleString()} km` : ""}. Every VAC vehicle receives a full MVI and complete reconditioning before delivery.`,
-        status, source: `auction-import:${car.source}`, auctionUrl: url,
+        status, source: manual ? "manual-add" : `auction-import:${car.source}`, auctionUrl: url || null,
         createdAt: new Date(), updatedAt: nowIso2,
       };
       const ref = await db.collection("inventory").add(data);
@@ -5605,6 +5632,45 @@ async function startServer() {
     } catch (e: any) {
       console.error("[AUCTION-IMPORT]", e);
       return res.status(500).json({ error: e?.message || "Import failed." });
+    }
+  });
+
+  // Upload raw photos (customer trade-in shots) → Firebase Storage, return URLs.
+  // The manual add flow then passes these URLs to import-auction, which re-hosts
+  // and composites them into the branded showroom listing.
+  const inventoryUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 15 * 1024 * 1024, files: 40 },
+    fileFilter: (_req, file, cb) => {
+      if (/^image\//.test(file.mimetype)) return cb(null, true);
+      cb(new Error("Only image files are allowed."));
+    },
+  });
+  app.post("/api/inventory/upload-photos", inventoryUpload.array("photos", 40), async (req, res) => {
+    try {
+      const ctx = await requireAdmin(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const { admin } = await getFirestoreAdmin();
+      const bucket = admin.storage().bucket("gen-lang-client-0753805028.firebasestorage.app");
+      const crypto = await import("crypto");
+      const batch = crypto.randomUUID();
+      const files = (req.files || []) as any[];
+      if (!files.length) return res.status(400).json({ error: "No photos received." });
+      const urls: string[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        const path = `inventory-uploads/${batch}/${String(i).padStart(2, "0")}.jpg`;
+        const token = crypto.randomUUID();
+        await bucket.file(path).save(f.buffer, {
+          contentType: f.mimetype || "image/jpeg", resumable: false,
+          metadata: { metadata: { firebaseStorageDownloadTokens: token } },
+        });
+        urls.push(`https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`);
+      }
+      res.json({ ok: true, urls });
+    } catch (e: any) {
+      console.error("[INVENTORY-UPLOAD]", e);
+      res.status(500).json({ error: e?.message || "Upload failed." });
     }
   });
 
