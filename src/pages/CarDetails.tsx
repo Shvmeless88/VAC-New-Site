@@ -1028,7 +1028,7 @@ export default function CarDetails() {
               {car.status} {car.status === 'Sold' && soldDateStr ? `on ${soldDateStr}` : ''}
             </div>
           )}
-          {car.status === 'In Recon' && (
+          {(car.status === 'In Recon' || car.status === 'Incoming') && (
             <p className="basis-full text-[13px] text-slate-500 leading-snug mt-1">
               Just arrived — every VAC vehicle completes a full MVI and reconditioning before
               delivery. Full photos coming after detailing; message us anytime for current
@@ -1273,7 +1273,7 @@ export default function CarDetails() {
             <div className="md:hidden">
               {/* Trust Bar - Moved above title for Clutch layout */}
               <div className="px-5 pt-3 pb-1 flex flex-wrap gap-2 bg-white">
-                {car.status !== 'In Recon' && (
+                {car.status !== 'In Recon' && car.status !== 'Incoming' && (
                   <>
                     <div className="rounded-full border border-slate-100 px-3 py-1 text-[10px] font-bold text-slate-600 uppercase tracking-widest bg-white">
                       150-Point Inspected

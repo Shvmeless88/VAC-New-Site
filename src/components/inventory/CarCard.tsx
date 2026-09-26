@@ -84,7 +84,7 @@ export default React.memo(function CarCard({ car, hideSoldDate = false }: CarCar
             </div>
 
             <div className="absolute bottom-2 left-2 flex gap-1">
-              {car.status === 'In Recon' ? (
+              {(car.status === 'In Recon' || car.status === 'Incoming') ? (
                 <div className="bg-amber-50/95 backdrop-blur-sm rounded-lg px-2 py-1 shadow-sm text-[10px] font-bold text-amber-700 flex items-center">
                   Just Arrived · Reserve Early
                 </div>

@@ -15,7 +15,7 @@ type Fields = {
 const BLANK: Fields = {
   year: '', make: '', model: '', trim: '', vin: '', mileage: '',
   bodyStyle: '', exteriorColor: '', engine: '', transmission: '', drivetrain: '',
-  price: '', status: 'In Recon',
+  price: '', status: 'Incoming',
 };
 
 const BODY_TYPES = ['SUV', 'Sedan', 'Truck', 'Hatchback', 'Van', 'Convertible'];
@@ -185,7 +185,7 @@ export default function AddVehicleModal({ onClose }: { onClose: () => void }) {
                 <Label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Status</Label>
                 <select value={f.status} onChange={(e) => set('status', e.target.value)}
                   className="h-11 w-full rounded-xl border border-gray-200 px-3 text-sm bg-white">
-                  <option value="In Recon">Incoming — Just Arrived</option>
+                  <option value="Incoming">Incoming — Just Arrived</option>
                   <option value="For Sale">For Sale</option>
                   <option value="Pending Sale">Pending Sale</option>
                 </select>
