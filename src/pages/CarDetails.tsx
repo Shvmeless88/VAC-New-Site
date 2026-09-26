@@ -1055,6 +1055,11 @@ export default function CarDetails() {
                 PENDING SALE
               </span>
             </div>
+          ) : (car.status === 'Incoming' || car.status === 'In Recon') && !(Number(car.price) > 0) ? (
+            <div className="flex flex-col gap-1 border-b border-gray-100 pb-4">
+              <span className="text-3xl font-black text-brand-primary tracking-tight uppercase">Arriving Soon</span>
+              <span className="text-sm text-slate-500 font-bold">Reserve early — contact us for details &amp; pricing</span>
+            </div>
           ) : (
             <div className="flex flex-col gap-1 border-b border-gray-100 pb-4">
               {financeTerm ? (

@@ -159,13 +159,16 @@ export default function Inventory() {
         }
 
         const price = Number(car.price);
-        if (!price || isNaN(price)) return false; // Skip cars with no price
+        const noPrice = !price || isNaN(price);
+        // Incoming / just-arrived cars are listed before a price is set — keep them.
+        const incomingNoPrice = noPrice && (car.status === 'Incoming' || car.status === 'In Recon');
+        if (noPrice && !incomingNoPrice) return false; // Skip priced-out cars
         
         const fullTitle = `${car.year} ${car.make} ${car.model} ${car.bodyStyle || ''} ${car.trim || ''} ${car.vin || ''} ${car.stockNumber || ''}`.toLowerCase();
 
         const matchesSearch = query === '' || queryWords.every(word => fullTitle.includes(word));
         const matchesBody = selectedBody === 'all' || car.bodyStyle === selectedBody;
-        const matchesPrice = price >= debouncedPriceRange[0] && price <= debouncedPriceRange[1];
+        const matchesPrice = incomingNoPrice || (price >= debouncedPriceRange[0] && price <= debouncedPriceRange[1]);
         
         // Use pre-calculated biWeekly field with fallback
         const carBiweekly = parseFloat(String(car.biWeekly).replace(/[^0-9.]/g, '')) || (Number(car.price) / 156) || 999;

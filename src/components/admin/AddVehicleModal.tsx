@@ -91,7 +91,7 @@ export default function AddVehicleModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const canCreate = f.year && f.make && f.model && Number(f.price) > 0 && photos.length > 0 && !creating;
+  const canCreate = f.year && f.make && f.model && photos.length > 0 && !creating;
 
   const create = async () => {
     if (!canCreate) return;
@@ -176,11 +176,6 @@ export default function AddVehicleModal({ onClose }: { onClose: () => void }) {
                 </select>
               </div>
               {field('Colour', 'exteriorColor')}
-              <div className="space-y-1.5">
-                <Label className="text-[11px] font-bold text-brand-primary uppercase tracking-widest">Retail Price *</Label>
-                <Input value={f.price} onChange={(e) => set('price', e.target.value)} type="number" placeholder="e.g. 42995"
-                  className="h-11 rounded-xl border-brand-primary/30 focus-visible:ring-brand-primary/20" />
-              </div>
               <div className="space-y-1.5">
                 <Label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Status</Label>
                 <select value={f.status} onChange={(e) => set('status', e.target.value)}

@@ -5353,7 +5353,9 @@ async function startServer() {
           }
         }
       } catch (me) { console.error("[AUCTION-IMPORT] market comps skipped:", (me as any)?.message); }
-      const finalPrice = price > 0 ? price : (market?.suggested || 0);
+      // Manual adds (trade-ins) are listed WITHOUT a price ("Arriving Soon") unless
+      // one was typed — never auto-price them off the market.
+      const finalPrice = price > 0 ? price : (manual ? 0 : (market?.suggested || 0));
 
       // ---- AI listing description: warm, honest, grounded ONLY in the parsed facts.
       let aiDescription = "";

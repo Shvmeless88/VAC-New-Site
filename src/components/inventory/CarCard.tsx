@@ -86,7 +86,7 @@ export default React.memo(function CarCard({ car, hideSoldDate = false }: CarCar
             <div className="absolute bottom-2 left-2 flex gap-1">
               {(car.status === 'In Recon' || car.status === 'Incoming') ? (
                 <div className="bg-amber-50/95 backdrop-blur-sm rounded-lg px-2 py-1 shadow-sm text-[10px] font-bold text-amber-700 flex items-center">
-                  Just Arrived · Reserve Early
+                  {car.status === 'Incoming' ? 'Arriving Soon · Reserve Early' : 'Just Arrived · Reserve Early'}
                 </div>
               ) : (
                 <>
@@ -123,6 +123,11 @@ export default React.memo(function CarCard({ car, hideSoldDate = false }: CarCar
               ) : car.status === 'Pending Sale' ? (
                 <div className="flex flex-col items-center justify-center w-full bg-amber-100 text-amber-700 py-1.5 rounded-lg">
                   <span className="text-sm font-black tracking-widest uppercase">Pending Sale</span>
+                </div>
+              ) : car.status === 'Incoming' ? (
+                <div className="flex flex-col items-center justify-center w-full bg-brand-accent/10 text-brand-primary py-1.5 rounded-lg">
+                  <span className="text-sm font-black tracking-widest uppercase">Arriving Soon</span>
+                  <span className="text-[10px] font-bold opacity-70">Reserve Early</span>
                 </div>
               ) : (
                 <>
@@ -163,7 +168,7 @@ export default React.memo(function CarCard({ car, hideSoldDate = false }: CarCar
             <div className="flex-grow"></div>
 
             {/* Footer with Info Icon */}
-            {car.status !== 'Sold' && car.status !== 'Pending Sale' && (
+            {car.status !== 'Sold' && car.status !== 'Pending Sale' && car.status !== 'Incoming' && (
               <div className="flex items-center justify-between text-[10px] text-gray-400 mt-2 font-medium">
                 <span>Excl. HST & Licensing</span>
                 <div className="flex items-center gap-1 cursor-help">
