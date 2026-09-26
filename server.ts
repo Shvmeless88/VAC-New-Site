@@ -5247,9 +5247,13 @@ async function startServer() {
           /sedan|saloon|coupe/.test(raw) ? "Sedan" :
           /wagon/.test(raw) ? "SUV" : "";
         const fromModel = MODEL_BODY.find(([re]) => re.test(model))?.[1] || "";
+        // On a manual add the admin picked the body type by hand — trust it over
+        // the model regex (e.g. Mazda3 Sport is a hatchback, not the sedan the
+        // "mazda3" pattern would infer). Auction free text stays regex-normalized.
+        const manualBody = manual && ["SUV", "Sedan", "Truck", "Hatchback", "Van", "Convertible"].includes(car.bodyStyle) ? car.bodyStyle : "";
         // Model identity beats auction free text (their labels are unreliable);
         // raw text fills in for models we have not seen before.
-        car.bodyStyle = fromModel || fromRaw || car.bodyStyle || "";
+        car.bodyStyle = manualBody || fromModel || fromRaw || car.bodyStyle || "";
         if (!["SUV", "Sedan", "Truck", "Hatchback", "Van", "Convertible"].includes(car.bodyStyle)) car.bodyStyle = fromRaw || "SUV";
       }
 
