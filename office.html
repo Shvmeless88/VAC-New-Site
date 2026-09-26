@@ -22,7 +22,7 @@ header{display:flex;align-items:center;justify-content:space-between}
 .pacebar{height:1vh;background:#0c1330;border-radius:1vh;margin-top:.8vh;overflow:hidden}.pacebar>span{display:block;height:100%;background:linear-gradient(90deg,var(--accent),#a99bff)}
 .main{flex:1;display:grid;grid-template-columns:1.35fr 1fr;gap:1.2vw;min-height:0}
 .rcol{display:flex;flex-direction:column;gap:1.2vw;min-height:0}
-.rcol .card:first-child{flex:1.35;min-height:0}
+.rcol .card:first-child{flex:1.05;min-height:0}
 .dcard{flex:1;min-height:0;overflow:hidden;display:none}
 .dwrap{display:grid;grid-template-columns:1fr 1fr;gap:1.4vw;margin-top:.8vh}
 .dh{font-size:1.4vh;color:var(--muted);text-transform:uppercase;letter-spacing:.1vw;margin-bottom:.5vh}
@@ -92,8 +92,7 @@ header{display:flex;align-items:center;justify-content:space-between}
  <div class="card dcard" id="dcard"><h2>Website Demand · Last 7 Days</h2>
   <div class="dwrap">
    <div><div class="dh">&#128293; Most shopped (For Sale)</div><div id="d_hot"></div></div>
-   <div><div class="dh">&#129482; Cold &middot; &le;2 shoppers</div><div id="d_cold"></div>
-     <div class="dh" style="margin-top:1.2vh">Shoppers want &middot; vs lot</div><div id="d_mix"></div></div>
+   <div><div class="dh">Shoppers want &middot; vs lot</div><div id="d_mix"></div></div>
   </div><div class="dasof">Shoppers = people who viewed that vehicle's page on our website (last 7 days). Want = what this week's credit applicants said they're shopping for on the application. Lot = our current For Sale mix.</div><div class="dasof" id="d_asof"></div>
  </div>
  </div>
@@ -174,12 +173,11 @@ async function load(){try{
     $('ai_txt').innerHTML=s.bullets.map(b=>`<span class="aib">&bull; ${b}</span>`).join('')+(s.asOf?` <span class="dsub">(${s.asOf})</span>`:'');}
   if(j.demand){const d=j.demand;$('dcard').style.display='block';
     $('d_hot').innerHTML=(d.hot||[]).map(h=>`<div class="drow"><span>${h.name}</span><b>${h.users} <span class="dsub">shoppers</span></b></div>`).join('');
-    $('d_cold').innerHTML=(d.cold||[]).slice(0,4).map(n=>`<div class="drow coldr"><span>${n}</span></div>`).join('')||'<div class="drow coldr"><span>none</span></div>';
     const w=d.want||{},hv=d.have||{};const tw=Object.values(w).reduce((a,b)=>a+ +b,0)||1;const th=Object.values(hv).reduce((a,b)=>a+ +b,0)||1;
     $('d_mix').innerHTML=['SUV','Sedan','Truck','Minivan'].filter(k=>w[k]||hv[k]).map(k=>{
       const wp=Math.round((+w[k]||0)/tw*100),hp=Math.round((+hv[k]||0)/th*100);
       return `<div class="drow"><span>${k}</span><b>${wp}% <span class="dsub">want</span> · ${hp}% <span class="dsub">lot</span>${wp-hp>=10?' &#9888;&#65039;':''}</b></div>`}).join('');
-    $('d_asof').textContent=(d.coldCount>4?`+${d.coldCount-4} more cold · `:'')+'GA + applications · through '+(d.asOf||'');}
+    $('d_asof').textContent='GA + applications · through '+(d.asOf||'');}
 }catch(e){$('mlabel').textContent='Reconnecting…';}}
 load();setInterval(load,10*60*1000);
 setTimeout(()=>location.reload(),24*60*60*1000);
