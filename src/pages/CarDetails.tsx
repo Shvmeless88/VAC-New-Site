@@ -16,7 +16,8 @@ import {
 import { Car } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { calculateBiWeeklyPayment, cn, maxFinancingTerm } from '@/lib/utils';
+import { calculateBiWeeklyPayment, cn, maxFinancingTerm, getVehicleUrl } from '@/lib/utils';
+import { useInventory } from '@/hooks/useInventory';
 import { 
   ArrowLeft, 
   ChevronRight, 
@@ -909,6 +910,26 @@ export default function CarDetails() {
     }
   }, [car?.createdAt, car?.status]);
 
+  // Prev/next vehicle navigation — reuse the same list + order as the inventory
+  // page (createdAt desc), filtered to what a shopper can browse.
+  const { inventory: allInventory } = useInventory();
+  const browseList = React.useMemo(() => {
+    const now = Date.now();
+    const fiveDays = 5 * 24 * 60 * 60 * 1000;
+    return (allInventory || []).filter((c: any) => {
+      const price = Number(c.price);
+      if (!price || isNaN(price)) return false;
+      if (c.status === 'Sold') {
+        const soldAt = c.soldAt?.toMillis ? c.soldAt.toMillis() : (c.soldAt ? new Date(c.soldAt).getTime() : 0);
+        if (!soldAt || (now - soldAt) > fiveDays) return false;
+      }
+      return true;
+    });
+  }, [allInventory]);
+  const curIdx = React.useMemo(() => browseList.findIndex((c: any) => c.id === car?.id), [browseList, car?.id]);
+  const prevCar = curIdx > 0 ? browseList[curIdx - 1] : null;
+  const nextCar = curIdx >= 0 && curIdx < browseList.length - 1 ? browseList[curIdx + 1] : null;
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -1079,6 +1100,33 @@ export default function CarDetails() {
           <ChevronRight className="h-4 w-4" />
           <span className="text-brand-primary font-bold">{car.make} {car.model}</span>
         </nav>
+
+        {/* Prev / next vehicle navigation */}
+        <div className="flex items-center justify-between gap-2 mb-4 lg:mb-6">
+          {prevCar ? (
+            <Link
+              to={getVehicleUrl(prevCar)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-600 shadow-sm hover:border-brand-primary hover:text-brand-primary transition-colors"
+              aria-label={`Previous vehicle: ${prevCar.year} ${prevCar.make} ${prevCar.model}`}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              <span className="hidden sm:inline">Previous</span>
+            </Link>
+          ) : <span className="w-[76px]" />}
+          <Link to="/inventory" className="text-sm font-medium text-slate-400 hover:text-brand-primary transition-colors">
+            All inventory
+          </Link>
+          {nextCar ? (
+            <Link
+              to={getVehicleUrl(nextCar)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-600 shadow-sm hover:border-brand-primary hover:text-brand-primary transition-colors"
+              aria-label={`Next vehicle: ${nextCar.year} ${nextCar.make} ${nextCar.model}`}
+            >
+              <span className="hidden sm:inline">Next</span>
+              <ChevronRight className="h-4 w-4" />
+            </Link>
+          ) : <span className="w-[76px]" />}
+        </div>
 
         <div className="md:grid md:grid-cols-12 md:gap-12 items-start mt-0 md:mt-0">
           {/* Left Column (Viewer + Gallery) */}

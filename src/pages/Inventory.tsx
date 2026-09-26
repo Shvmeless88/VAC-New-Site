@@ -161,8 +161,8 @@ export default function Inventory() {
         const price = Number(car.price);
         if (!price || isNaN(price)) return false; // Skip cars with no price
         
-        const fullTitle = `${car.year} ${car.make} ${car.model} ${car.bodyStyle || ''} ${car.trim || ''}`.toLowerCase();
-        
+        const fullTitle = `${car.year} ${car.make} ${car.model} ${car.bodyStyle || ''} ${car.trim || ''} ${car.vin || ''} ${car.stockNumber || ''}`.toLowerCase();
+
         const matchesSearch = query === '' || queryWords.every(word => fullTitle.includes(word));
         const matchesBody = selectedBody === 'all' || car.bodyStyle === selectedBody;
         const matchesPrice = price >= debouncedPriceRange[0] && price <= debouncedPriceRange[1];
@@ -377,7 +377,7 @@ export default function Inventory() {
             <div className="relative w-full group">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-[#64748B] group-focus-within:text-[#41456B] transition-colors duration-300 ease-in-out" />
               <Input
-                placeholder="Search by make, model..."
+                placeholder="Search by make, model, or VIN..."
                 className="h-12 pl-12 rounded-xl bg-white border-[#CBD5E1] shadow-sm placeholder:text-[#64748B] font-medium text-base transition-all duration-300 ease-in-out hover:border-[#94A3B8] focus-visible:border-[#7380FF] focus-visible:ring-4 focus-visible:ring-[#7380FF]/15 w-full"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -485,7 +485,7 @@ export default function Inventory() {
                 <div className="relative flex-grow group">
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-[#64748B] group-focus-within:text-[#41456B] transition-colors duration-300 ease-in-out" />
                   <Input
-                    placeholder="Search by make, model..."
+                    placeholder="Search by make, model, or VIN..."
                     className="h-12 pl-12 rounded-xl bg-white border-[#CBD5E1] shadow-sm placeholder:text-[#64748B] font-medium text-base transition-all duration-300 ease-in-out hover:border-[#94A3B8] focus-visible:border-brand-accent focus-visible:ring-4 focus-visible:ring-brand-accent/15"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
