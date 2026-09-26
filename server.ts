@@ -5678,6 +5678,55 @@ async function startServer() {
     }
   });
 
+  // Read a PBS (dealership software) screenshot and pull the vehicle fields off it
+  // with a vision pass, so a trade-in can be added by screenshotting the PBS record
+  // instead of retyping everything.
+  app.post("/api/inventory/extract-pbs", inventoryUpload.single("screenshot"), async (req, res) => {
+    try {
+      const ctx = await requireAdmin(req);
+      if ("error" in ctx) return res.status(ctx.error).json({ error: ctx.message });
+      const f = (req as any).file;
+      if (!f?.buffer) return res.status(400).json({ error: "No screenshot received." });
+      const key = process.env.GEMINI_API_KEY || "";
+      if (!key) return res.status(503).json({ error: "Vehicle-reading AI is not configured." });
+      const prompt = `This is a screenshot from a dealership management system showing one vehicle's details. Extract the vehicle information and reply with ONLY a JSON object, no other text or markdown:
+{"vin":"","year":0,"make":"","model":"","trim":"","mileage":0,"engine":"","transmission":"","drivetrain":"","bodyStyle":"","exteriorColor":"","stockNumber":""}
+Rules: mileage is the Odometer reading as a plain number. bodyStyle must be exactly one of SUV, Sedan, Truck, Hatchback, Van, Convertible (a crew-cab or any pickup is Truck). Make/model/trim in proper case (e.g. "GMC", "Canyon", "Denali"). If a field is not visible, use "" (or 0 for numbers).`;
+      const gr = await fetchWithTimeout(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${key}`,
+        {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: f.mimetype || "image/jpeg", data: f.buffer.toString("base64") } }] }] }),
+        }, 40000,
+      );
+      const gj: any = await gr.json();
+      if (gj?.error) { console.error("[EXTRACT-PBS] gemini error:", JSON.stringify(gj.error).slice(0, 200)); return res.status(502).json({ error: "Could not read the screenshot — try again." }); }
+      const text = String(gj?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join("") || "");
+      const m = text.match(/\{[\s\S]*\}/);
+      if (!m) return res.status(422).json({ error: "Couldn't find vehicle details in that image." });
+      let parsed: any;
+      try { parsed = JSON.parse(m[0]); } catch { return res.status(422).json({ error: "Couldn't parse the vehicle details." }); }
+      const clean = {
+        vin: String(parsed.vin || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 17),
+        year: Number(parsed.year) || null,
+        make: String(parsed.make || "").trim(),
+        model: String(parsed.model || "").trim(),
+        trim: String(parsed.trim || "").trim(),
+        mileage: Number(String(parsed.mileage ?? "").replace(/[^\d]/g, "")) || null,
+        engine: String(parsed.engine || "").trim(),
+        transmission: String(parsed.transmission || "").trim(),
+        drivetrain: String(parsed.drivetrain || "").trim(),
+        bodyStyle: ["SUV", "Sedan", "Truck", "Hatchback", "Van", "Convertible"].includes(String(parsed.bodyStyle)) ? String(parsed.bodyStyle) : "",
+        exteriorColor: String(parsed.exteriorColor || "").trim(),
+        stockNumber: String(parsed.stockNumber || "").trim(),
+      };
+      res.json({ ok: true, vehicle: clean });
+    } catch (e: any) {
+      console.error("[EXTRACT-PBS]", e);
+      res.status(500).json({ error: e?.message || "Extraction failed." });
+    }
+  });
+
   // Google Merchant Center & Facebook Catalog Inventory Feed (XML)
   app.get("/api/inventory-feed.xml", async (req, res) => {
     try {
